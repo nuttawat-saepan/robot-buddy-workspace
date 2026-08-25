@@ -356,6 +356,40 @@ else, and the odometry stream is continuous. Neither is a problem on a wired
 uplink, and neither crosses the robot-to-ground-station link, but both are
 worth checking against whatever connection the site actually has.
 
+### 1.K Deploy scripts and onsite config - done
+
+```text
+scripts/deploy_to_board.sh   rsync go2_control and go2_interfaces to the board
+                             and colcon build them, with --dry-run and
+                             --sync-only. Reports which upstream packages the
+                             board is still missing rather than assuming.
+scripts/onsite.env.example   every site-specific value in one file - interfaces,
+                             addresses, domain, mount pose, camera transform,
+                             map path, MQTT broker. Copy to onsite.env, which
+                             is gitignored.
+scripts/setup_robot_env.sh   sourcing order and the CycloneDDS interface list
+scripts/setup_ground_env.sh  the matching half for the ground station
+```
+
+Two things the env scripts exist to get right, both of which fail as an empty
+`ros2 topic list` and nothing else:
+
+* `RMW_IMPLEMENTATION` must match on both machines. FastRTPS and CycloneDDS
+  cannot talk to each other at all.
+* `CYCLONEDDS_URI` binds to named interfaces and ignores every other one.
+  Unitree's own `setup.sh` names a single wired interface, so a wireless link
+  discovers nothing until the wireless interface is listed too. The robot
+  script lists both the link interface and the robot's internal one.
+
+`deploy_to_board.sh` builds with `--symlink-install`, which is worth the
+keystroke: `go2_control` is pure Python, so with symlinks an edit to a node, a
+launch file or a YAML takes effect on the next node restart with no rebuild.
+Without it every one-line change costs a colcon run over ssh.
+
+It deliberately does not install `~/ws_livox` or `~/ws_fastlio_livox`. Those
+are upstream sources with patches applied, and the first build of each wants a
+human reading the output - see `patches/fast_lio/README.md`.
+
 ## Part 2 - Board Bring-Up (board needed, robot does not walk)
 
 ### 2.1 Build the driver

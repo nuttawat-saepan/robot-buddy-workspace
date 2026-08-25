@@ -44,3 +44,7 @@ node_modules/
 # videos and slides, large and not source
 *.mp4
 *.pptx
+
+# Site-specific addresses and mount pose. Copy onsite.env.example and edit;
+# committing one site's values is how a wrong camera transform reaches a robot.
+Systronic/scripts/onsite.env

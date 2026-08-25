@@ -18,11 +18,11 @@ Read `LIVOX_DEPLOYMENT_PLAN.md` for what happens next.
                                                      SDK NOT done - needs the robot
 5. tune the costmap, send goals, verify the path
    in RViz with /cmd_vel disconnected                done, two real defects found
-6. deploy scripts for the board and onsite config    partly - see 6 below
+6. deploy scripts for the board and onsite config    done - see section 8
 ```
 
-Two of six are incomplete, and both for the same reason: there is no board and
-no robot on the desk.
+One of six is incomplete - talking to the Go2 movement SDK - for the only
+reason that matters: there is no board and no robot on the desk.
 
 ### 2.2 "Align the sim topics" turned into something else
 
@@ -169,10 +169,6 @@ Corrections are marked in place in the three affected documents.
 Go2 movement SDK              never exercised. cmd_vel_node was reviewed and
                               its watchdog fixed, but nothing has talked to the
                               SDK. Needs the robot.
-deploy scripts                the patch series and READMEs are build
-                              instructions, and check_robot_link.sh is an
-                              onsite tool, but there is no scripted deploy.
-                              Worth writing once the board's paths are known.
 photograph upload             the capture spin runs and completes; no image was
                               published because main.py selects its camera
                               topic by sim_mode and the test fed the wrong one.
@@ -184,6 +180,10 @@ Wi-Fi baseline                still never measured idle
 ## 8. Artefacts
 
 ```text
+scripts/deploy_to_board.sh         rsync + build on the board, --dry-run first
+scripts/onsite.env.example         every site-specific value in one file
+scripts/setup_robot_env.sh         sourcing order and CycloneDDS interfaces
+scripts/setup_ground_env.sh        the matching half
 launch/livox_robot.launch.py       everything that runs on the board
 launch/livox_ground.launch.py      everything that runs on the ground station
 launch/livox_slam.launch.py        mapping with ray tracing

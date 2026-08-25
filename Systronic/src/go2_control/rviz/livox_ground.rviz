@@ -24,6 +24,7 @@ Panels:
         - /Global Options1
         - /Map1
         - /Scan1
+        - /Local costmap1
       Splitter Ratio: 0.5
     Tree Height: 700
   - Class: rviz_common/Views
@@ -153,8 +154,28 @@ Visualization Manager:
         Value: /plan
       Value: true
 
-    # The global costmap is about 116 KB at 1 Hz, the heaviest thing here.
-    # Turn it off if the link is marginal; nothing else depends on it.
+    # The local costmap is a 5 x 5 m rolling window, 100 x 100 cells, about
+    # 10 KB at 2 Hz. Negligible on the link and the most useful thing to watch
+    # while the robot is moving: it is what the controller is actually avoiding.
+    - Alpha: 0.5
+      Class: rviz_default_plugins/Map
+      Color Scheme: costmap
+      Draw Behind: false
+      Enabled: true
+      Name: Local costmap
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /local_costmap/costmap
+      Use Timestamp: false
+      Value: true
+
+    # The global costmap covers the whole map: about 116 KB at 1 Hz, roughly
+    # 1 Mbps, which is three times everything else here put together. Off by
+    # default for that reason, not because it is not useful - turn it on when
+    # a plan looks wrong and the static layer is the suspect.
     - Alpha: 0.4
       Class: rviz_default_plugins/Map
       Color Scheme: costmap
