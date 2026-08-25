@@ -228,13 +228,21 @@ reflectivity warnings    0 after patch 4
 This is a smoke test against synthetic data. It shows the pipeline is wired
 correctly end to end; it says nothing about accuracy on real hardware.
 
-## 8b. Handheld Mapping On The Bench (verified 2026-08-19, real sensor)
+## 8b. First Mapping On The Bench (verified 2026-08-19, real sensor)
 
-The Mid-360 cabled straight to the MiniPC cannot map from the robot, but it can
-map from the hand, and that exercises the entire chain without needing the
-mount pose measured: a handheld map lives in FAST-LIO's own frame, so the
-`body -> base_link` transform that section 9 is blocked on does not enter into
-it.
+> **Correction, 2026-08-25.** This section and 8c to 8e originally described
+> the sensor as being carried by hand. The operator confirmed it was mounted on
+> the Go2 for every recording and the robot did the walking. The data agrees:
+> the sensor sat 0.43 m above the floor, a standing Go2 rather than chest
+> height, and the fitted tilt of +10.26 degrees is close to Unitree's published
+> 13 degrees. Wherever the text below excuses a number as an artefact of hand
+> shake or of a tilt that would disappear once the sensor is bolted on, that
+> explanation does not hold.
+
+The first map was made while the sensor was cabled to the MiniPC, which
+exercises the entire chain without needing the mount pose to be exact: the map
+lives in FAST-LIO's own frame, so the `body -> base_link` transform that
+section 9 is blocked on does not enter into it.
 
 ```bash
 ros2 launch go2_control livox_mid360_lio.launch.py \
@@ -245,7 +253,7 @@ ros2 launch go2_control livox_mid360_lio.launch.py \
 ros2 run go2_control pcd_to_map \
     ~/ws_fastlio_livox/src/FAST_LIO/PCD/scans.pcd \
     --z-min -0.4 --z-max 0.4 \
-    -o src/go2_control/map/livox_handheld
+    -o src/go2_control/map/livox_test1
 ```
 
 Result from a 25 s stationary run, sensor on a desk:
@@ -263,8 +271,8 @@ Walls came out clean and straight. Two things to watch:
   run gave 87 MB; a 5 min run gave 345 MB. Budget accordingly on the board.
 - `--z-min/--z-max` are in the **sensor** frame, whose origin is the sensor and
   not the floor. Read the reported z extent first: the floor shows up as the
-  lower bound. The defaults assume a handheld sensor at chest height and are
-  wrong for a sensor sitting on a desk.
+  lower bound. The defaults assume a sensor at chest height and are wrong both
+  for a sensor on a desk and for one on a standing Go2 at 0.43 m.
 
 ## 8c. Building A Nav2 Map (verified 2026-08-20, replayed field data)
 
@@ -283,13 +291,13 @@ ros2 run go2_control pcd_to_map <scans.pcd> \
 ### Take the mount tilt from the data, not the datasheet
 
 Section 6 gives 13 degrees for the sensor bolted to the Go2, but any run where
-the sensor was carried, or the robot started on a slope, has a different tilt -
-and the tilt is what decides whether a flat slice cuts the floor. Measure it
+the robot started on a slope, or stood differently, has a different tilt - and
+the tilt is what decides whether a flat slice cuts the floor. Measure it
 from the cloud instead: take the lowest point in each 1 m cell, fit a plane
 through those, and read the tilt off the plane normal.
 
-On `02_loop`, a handheld walk, that gave **pitch +10.26, roll +1.72**, sensor
-0.43 m above the floor - not the 13 degrees the datasheet would have supplied.
+On `02_loop` that gave **pitch +10.26, roll +1.72**, sensor 0.43 m above the
+floor - close to, but not exactly, the 13 degrees the datasheet supplies.
 Confirmation that the correction is right: after levelling, floor returns
 cluster **1.25x more tightly** and settle at a single height, `z = -0.38 m`.
 
@@ -369,12 +377,17 @@ gap at the end      1.65 m   = 4.72% of distance travelled
 height error        0.48 m   on a single flat floor
 ```
 
-FAST-LIO would normally be under 1%. The likely cause is that this was a
-handheld walk - hand shake and fast turns - rather than a defect, and the
-`extrinsic_T` in the config describes the sensor mounted on the Go2, which is
-not where it was. **Re-measure loop closure as soon as the sensor is bolted to
-the robot, before tuning AMCL.** If it stays near 5%, AMCL alone will not hold
-position and AprilTag stops being optional.
+FAST-LIO would normally be under 1%. The sensor was mounted on the robot for
+this run, so the explanation once offered here - hand shake from a carried
+sensor - does not apply, and 4.72% is what this configuration actually does.
+The remaining candidates are the `extrinsic_T` in the config, and the pitch and
+roll a trotting quadruped adds with every step. The 0.48 m height error over a
+single flat floor points at the vertical axis rather than at yaw.
+
+**Re-measure loop closure on a deliberate closed loop with the mount pose
+verified.** AMCL alone does not hold position at this drift - measured, see
+`LIVOX_AMCL_REPLAY_2026-08-25.md` - and AprilTag is a requirement of the system
+rather than a contingency.
 
 ## 8e. Measured: Scan Quality For AMCL (2026-08-20)
 
@@ -417,10 +430,9 @@ Two cautions before that number is used to decide anything. The error is one
 excursion between 30 and 60 s rather than steady accumulation, and it coincides
 with the peak heading error. And `body -> base_link` levels the sensor by a
 fixed rotation, which is exact for a bolted mount and only approximate for the
-hand that carried `02_loop` - when the operator tips the sensor, the band
-`pointcloud_to_laserscan` cuts tips out of level and stops being a slice of the
-same room the map is a slice of. That term disappears on the robot, so this is
-a bench baseline, not the answer to the AprilTag question.
+gait of a trotting quadruped - the body pitches and rolls with every step, and
+a fixed levelling rotation cannot follow that. Unlike a hand, this term does
+not disappear on the robot; it is a property of the platform.
 
 ### Replaying a bag on Foxy needs a clock you have to supply
 
@@ -460,8 +472,8 @@ numbers. What remains:
 
 Item 1 is now done - see section 8f and
 `LIVOX_AMCL_REPLAY_2026-08-25.md`. It did not decide the AprilTag question,
-because the handheld tilt of the bag is mixed into the residual; item 4 below
-is what decides it.
+on its own; the system requires AprilTag regardless, and
+`LIVOX_DEPLOYMENT_PLAN.md` treats it as a requirement.
 
 ```text
 1. done. AMCL localises against livox_02loop for a full 180 s replay without
@@ -495,5 +507,5 @@ measured +0.11 degrees of pitch in `odom` afterwards. The mount pose itself is
 still a datasheet figure rather than something checked on this robot.
 
 The map produced from `02_loop` is a bench artefact, not a site map: it is the
-room the sensor was carried around, kept only to exercise AMCL and Nav2 before
+room the robot was walked around, kept only to exercise AMCL and Nav2 before
 going on site.

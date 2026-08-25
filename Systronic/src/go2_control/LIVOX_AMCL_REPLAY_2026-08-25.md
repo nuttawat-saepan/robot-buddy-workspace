@@ -90,19 +90,28 @@ The error is not a steady accumulation. It is one excursion between 30 s and
 window - 17.5 degrees at t = 47.3 s against a 5.5 degree average. A filter that
 was simply being dragged by drift would not recover; this one does, twice.
 
-The leading explanation is the one thing about this dataset that will not be
-true on the robot. `02_loop` was carried by hand, and the `body -> base_link`
-bridge levels the sensor by a *fixed* rotation measured at the start of the
-run. That is exact for a sensor bolted to a frame and only approximate for a
-sensor held in a hand: when the operator tips the sensor, `base_link` tips with
-it, the horizontal band `pointcloud_to_laserscan` cuts tips out of level, and
-the scan AMCL correlates stops being a slice of the same room the map is a
-slice of. A fast turn while walking is exactly where that would be worst.
+**Correction, later the same day.** This section originally attributed the
+excursion to `02_loop` being a handheld walk. It was not: the operator
+confirmed the sensor was mounted on the Go2 and the robot did the walking, and
+the data agrees - the sensor sat 0.43 m up, a standing Go2 rather than chest
+height, and the fitted tilt of +10.26 degrees is close to Unitree's published
+13 degrees.
 
-So the honest reading is: the pipeline works and holds a lock, and the residual
-is not yet attributable between odometry drift and handheld tilt. Bolting the
-sensor to the robot removes the second, and that is the measurement that
-decides the AprilTag question.
+That removes the comfortable explanation. The `body -> base_link` bridge levels
+the sensor by a fixed rotation, which is exact for a bolted mount, so the
+excursion is not a levelling artefact. What remains, and is worth separating on
+the robot:
+
+* the gait. A trotting Go2 pitches and rolls with every step, and the fixed
+  levelling rotation cannot follow that. It is the same class of error as a
+  hand tipping, at a different frequency.
+* real odometry drift. FAST-LIO closed this loop 1.65 m out, 4.72%, where it
+  normally manages under 1%.
+* the map. The 30-60 s window is where the room's own geometry may simply be
+  ambiguous to a 2D scan.
+
+So the residual is a property of this robot in this configuration, not an
+artefact of how the data happened to be captured.
 
 ## 4. Against The Bench-Day Question
 
@@ -118,14 +127,15 @@ worst instantaneous residual       0.871 m  2.58% of path
 
 AMCL removes about 60% of the closing error and holds the rest to under a
 metre. That is enough to keep a costmap roughly aligned with the world and not
-enough to trust a 1 m goal tolerance. It does not settle the AprilTag question
-either way, and it should not be read as settling it, because section 3's
-handheld-tilt term is in every one of these numbers and will not be present on
-the robot.
+enough to trust a 1 m goal tolerance.
 
-The measurement that settles it is unchanged and still first in the queue:
-re-measure loop closure with the sensor bolted on, then re-run exactly this
-replay procedure against a map built from that data.
+Because the sensor was already mounted for this recording, these numbers are
+what the deployed configuration does, not a pessimistic stand-in for it. They
+support AprilTag being required rather than optional, which is also what the
+system is specified to do - see `LIVOX_DEPLOYMENT_PLAN.md`.
+
+Still worth doing on the robot: repeat this against a site map, and separate the
+gait contribution from the odometry drift.
 
 ## 5. The Defect Found On The Way
 
@@ -248,9 +258,10 @@ Note on `config/amcl_livox.yaml`: Foxy's nav2_amcl is 0.4.7 and takes
 `robot_model_type: "differential"`. The
 `"nav2_amcl::DifferentialMotionModel"` spelling in this package's
 `nav2_params.yaml` is the Galactic-and-later form and is rejected here. There
-is no omnidirectional model on Foxy, which is the wrong model for a handheld
-walk; the alphas are raised to 0.4 to compensate and should be dropped back to
-0.2 once the motion really is a differential base.
+is no omnidirectional model on Foxy. A trotting quadruped is not a differential
+base either - it sidesteps and yaws in ways the model does not describe - so
+the alphas are raised to 0.4 to widen the motion prior rather than to make it
+accurate.
 
 ## 9. Still Open
 

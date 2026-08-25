@@ -8,6 +8,17 @@ the numbers here.
 
 No robot motion. Nothing published `/cmd_vel` and no `cmd_vel_node` ran.
 
+> **Correction, 2026-08-25.** Passages in this file describing `02_loop` as a
+> handheld walk are wrong. The operator confirmed that the sensor was mounted
+> on the Go2 for every recording and the robot did the walking; it was never
+> carried. The data agrees: the sensor sat 0.43 m above the floor at the start,
+> which is a standing Go2 rather than chest height, and the fitted tilt of
+> +10.26 degrees is close to Unitree's published 13 degree mount pose. Where
+> the text below blames a measurement on hand shake or on a tilt that will not
+> be present once the sensor is bolted on, that explanation does not hold and
+> the number should be read as a real property of the robot configuration.
+
+
 ## 1. The Point Of The Day
 
 Answer as much as possible about the autonomy stack without the robot, so that
@@ -39,14 +50,15 @@ walls                    5.7 cm on one axis, 14.1 cm on the other
 room orientation         37.25 degrees, corners square
 ```
 
-This is a bench artefact, not a site map. It is the room the sensor was carried
+This is a bench artefact, not a site map. It is the room the robot was walked
 around, kept only so AMCL and Nav2 can be exercised before the next site visit.
 
 ### The mount tilt has to come from the data
 
-The 13 degree figure from Unitree describes the sensor bolted to the Go2.
-`02_loop` was carried by hand, so that number is wrong for this bag, and the
-tilt is exactly what decides whether a flat height slice cuts through the floor.
+The 13 degree figure from Unitree is a nominal mount pose. `02_loop` was
+recorded with the sensor on the robot, and the tilt that decides whether a flat
+height slice cuts through the floor is the one the sensor actually had - which
+depends on how the robot was standing, not only on how the bracket is drawn.
 
 Fitting a plane to the lowest point in each 1 m cell gave the real figure:
 
@@ -124,20 +136,23 @@ height error      0.48 m    on a single flat floor
 FAST-LIO is normally under 1%. The 14.1 cm wall in section 2 is this drift
 showing up as one wall drawn twice.
 
-The likely cause is that this was a handheld walk - hand shake, fast turns -
-and that the `extrinsic_T` in the config describes the sensor mounted on the
-robot, which is not where it was. So this is not yet evidence that the approach
-is wrong.
+The sensor was on the robot for this recording, so the explanation this
+originally carried - hand shake and fast turns from a carried sensor - does not
+apply. 4.72% is what FAST-LIO did in this configuration, against the under 1%
+it normally achieves, and it needs a real explanation rather than an excuse.
+Candidates worth separating: the `extrinsic_T` in the config, the gait's
+vertical motion, and the 0.48 m height error over a single flat floor, which
+points at pitch rather than at yaw drift.
 
 It is evidence that one measurement has to move to the front of the queue:
 
-> **Re-measure loop closure immediately after the sensor is bolted to the
-> robot, before any AMCL work.** Under 1% and AMCL alone is enough. Still near
-> 5% and AMCL will not hold position on its own, which makes AprilTag a
-> requirement rather than a later addition - roughly fourteen hours of work
-> that the plan currently treats as optional.
+> **Re-measure loop closure on a deliberate closed loop, with the mount pose
+> verified.** Under 1% and AMCL alone is enough. Still near 5% and AMCL will
+> not hold position on its own.
 
-Half an hour of measurement decides that.
+Since the sensor was already mounted for this recording, the 4.72% is the
+number to beat rather than a figure awaiting a fair test. AprilTag is a
+requirement of the system regardless - see `LIVOX_DEPLOYMENT_PLAN.md`.
 
 ## 6. Scan Quality For AMCL
 
@@ -158,11 +173,15 @@ has to run on the robot at all times**, not just during mapping.
 ## 7. State Of The Decision
 
 ```text
-locked   run everything on the Unitree board
 locked   FAST-LIO for odometry
 locked   project /cloud_registered_body, not the raw sensor cloud
-leaning  AMCL for localisation - evidence supports it, not yet run
-open     whether AprilTag is optional, decided by section 5
+locked   AMCL for localisation - run since, see LIVOX_AMCL_REPLAY_2026-08-25.md
+locked   AprilTag is required, not optional
+revised  "run everything on the Unitree board" did not survive measurement.
+         The navigation stack alone costs 2.2 cores on an i5, which is 4-7 on
+         a 4-core ARM board before the camera and Unitree's own leg control.
+         The board runs the sensor, odometry and projection; a ground station
+         runs localisation and planning. See LIVOX_DEPLOYMENT_PLAN.md.
 ```
 
 ## 8. What Is Ready For The Next Session
