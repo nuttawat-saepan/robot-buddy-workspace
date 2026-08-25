@@ -280,14 +280,49 @@ livox_ground.launch.py   map_server, amcl, Nav2, rviz
 No new nodes; this is regrouping only. Keep `replay` and `cmd_vel_topic`
 arguments and their defaults.
 
-### 1.I Run a mission end to end on the replayed bag
+### 1.I Mission from MQTT, against the replayed bag - done
 
-`main.py` needs exactly two things from the navigation stack: the
-`navigate_to_pose` action and `/odom`. Both now exist.
+`main.py` needs exactly two things from the navigation stack, the
+`navigate_to_pose` action and `/odom`, and both now exist on the Livox path.
+Driven end to end with a two-waypoint mission:
 
-**Acceptance:** an MQTT mission message drives the waypoint queue, status and
-progress publish back, and the capture spin triggers - with `/cmd_vel` still
-disconnected, so nothing is commanded.
+```text
+MQTT /missions/start   ->  main.py accepts, queues 2 waypoints
+                       ->  /missions/status  PENDING, then RUNNING
+                       ->  /missions/progress  WP-A, 50%
+                       ->  Nav2: "Received a goal, begin computing control effort"
+/cmd_vel                   Unknown topic; no cmd_vel_node running
+```
+
+There is no broker on this machine and mosquitto needs root, so
+`test/mini_mqtt_broker.py` is a 180-line MQTT 3.1.1 broker covering only what
+`main.py` uses - CONNECT, SUBSCRIBE, PUBLISH at QoS 0, PINGREQ, DISCONNECT and
+the `+`/`#` wildcards. It is a test fixture, not something to run in the field.
+
+```bash
+python3 src/go2_control/test/mini_mqtt_broker.py &
+ros2 run go2_control main --ros-args \
+    -p enable_mqtt:=true -p mqtt_broker:=127.0.0.1 -p mqtt_port:=1883 \
+    -p use_sim_time:=true
+```
+
+**Not covered by this test:** the photograph upload. The capture spin fires on
+arrival at an `isCapture` waypoint, and on a replayed bag the robot never
+arrives anywhere, so that branch cannot be reached without either the robot or
+a simulated base. It is the one part of the mission loop still unproven.
+
+**Worth knowing before the field day.** Counted at the broker over the run,
+`main.py` publishes far more than the mission traffic:
+
+```text
+odom    505 messages
+map      12 messages, 116 KB raw each, every 10 s
+```
+
+The map republish is roughly 12 KB/s sustained to the web on top of everything
+else, and the odometry stream is continuous. Neither is a problem on a wired
+uplink, and neither crosses the robot-to-ground-station link, but both are
+worth checking against whatever connection the site actually has.
 
 ## Part 2 - Board Bring-Up (board needed, robot does not walk)
 
