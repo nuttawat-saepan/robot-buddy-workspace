@@ -49,7 +49,16 @@ The ground station is a **role**, not a specific machine. Any laptop running
 Ubuntu 20.04 with Foxy will do, and a laptop is better in the field because it
 carries its own battery.
 
-## Part 1 - Desk Preparation (no hardware needed)
+## Part 1 - Desk Preparation (no hardware needed) - COMPLETE
+
+All of Part 1 was done on 2026-08-25. See `LIVOX_PREP_DAY_2026-08-25.md` for
+the day's write-up, including the six silent defects it surfaced and the two
+environment traps worth knowing on the board.
+
+One item is only nearly finished: the photograph upload was never observed,
+because `main.py` selects its camera topic by `sim_mode` and the test fed the
+other one. Everything ahead of it in the chain - arriving at the waypoint, the
+capture spin, the mission reaching 100% - did run.
 
 Ordered so that the cheapest thing that can delete later work comes first.
 
@@ -263,24 +272,47 @@ on the ground       board stays light and the ground station already has
 Recommended: **ground station**, because the board has only 4 cores and
 AprilTag detection is the heaviest single consumer in the system.
 
-### 1.H Split the launch files along the machine boundary
+### 1.H Split the launch files along the machine boundary - done
 
 `livox_amcl.launch.py` currently bundles the TF bridges and
 `pointcloud_to_laserscan` together with `map_server` and AMCL. The first two
 belong on the robot and the last two on the ground station.
 
-**Do:** regroup what already exists into
+Done, as `livox_robot.launch.py` and `livox_ground.launch.py`. Both still run
+on one machine for bench work, with `replay:=true enable_driver:=false`.
 
-```text
-livox_robot.launch.py    driver, fastlio, projection, TF, odom relay,
-                         cmd_vel_node, watchdog
-livox_ground.launch.py   map_server, amcl, Nav2, rviz
+`sensor_watchdog` was added at the same time, gating velocity on `/scan` and
+`/odom` freshness - the failure `cmd_vel_node` cannot see, because `/cmd_vel`
+keeps arriving on time while the sensors are dead.
+
+### 1.J A robot that moves, for testing the mission path - added
+
+Not on the original list, and it turned out to be what was actually missing.
+
+A replayed bag proves sensing and localisation but cannot prove the mission
+path: the robot in a bag has finished walking and never arrives anywhere, so
+reaching a waypoint, the capture spin, the photograph upload and a mission
+completing were all untestable.
+
+`go2_control/fake_base.py` integrates the velocity Nav2 sends into a pose and
+ray-casts the occupancy map to produce `/scan`. Run it **instead of**
+`livox_robot.launch.py` and the bag - both publish `/odom`, the
+`odom -> base_link` transform and `/scan`, and two publishers of those would
+break the TF tree silently.
+
+```bash
+ros2 launch go2_control livox_ground.launch.py replay:=false
+ros2 run go2_control fake_base
 ```
 
-No new nodes; this is regrouping only. Keep `replay` and `cmd_vel_topic`
-arguments and their defaults.
+Verified: a goal at (2.0, 1.0) returned SUCCEEDED, and a two-waypoint MQTT
+mission reached both waypoints and reported 100%.
 
-### 1.I Mission from MQTT, against the replayed bag - done
+It is a simulation and honest about it: no gait, no slip, and a laser that sees
+the map rather than the world. It says whether the software flow completes, not
+whether the Go2 can physically follow a path.
+
+### 1.I Mission from MQTT - done
 
 `main.py` needs exactly two things from the navigation stack, the
 `navigate_to_pose` action and `/odom`, and both now exist on the Livox path.
@@ -430,4 +462,16 @@ Goal tolerance vs localisation         xy_goal_tolerance is 0.25 m while AMCL
                                        leaves 0.41 m mean; re-derive after 3.7
 allow_unknown is true in the planner    acceptable while /cmd_vel is off, must
                                        be reconsidered against the site map
+Stale DDS shared memory                after repeated node restarts, /dev/shm
+                                       fills with orphaned fastrtps_* segments
+                                       and discovery degrades: subscriptions
+                                       match but never fire. Expect this during
+                                       board bring-up. Clean it with no ROS
+                                       process running:
+                                         rm -f /dev/shm/fastrtps_* \
+                                               /dev/shm/sem.fastrtps_*
+map_saver_cli writes free_thresh 0.25   which loads unknown space as free.
+                                       Check every map it writes; see
+                                       map/livox_slam_02loop.yaml
+The Go2 movement SDK                   still never exercised end to end
 ```

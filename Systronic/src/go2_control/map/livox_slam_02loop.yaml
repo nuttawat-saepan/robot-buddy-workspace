@@ -4,4 +4,10 @@ resolution: 0.05
 origin: [-13.7, -9.15, 0]
 negate: 0
 occupied_thresh: 0.65
-free_thresh: 0.25
+# 0.19, not the 0.25 map_saver_cli writes. An unknown pixel is 205,
+# which is an occupancy of (255-205)/255 = 0.196, and map_server calls a
+# cell free when occupancy < free_thresh. At 0.25 every unobserved cell
+# loads as FREE rather than unknown - and this map is about 65% unobserved,
+# so Nav2 would treat two thirds of it as known drivable floor and plan
+# straight through space nothing ever looked at.
+free_thresh: 0.19

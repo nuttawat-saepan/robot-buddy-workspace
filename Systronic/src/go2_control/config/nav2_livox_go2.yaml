@@ -107,14 +107,36 @@ controller_server:
       plugin: "dwb_core::DWBLocalPlanner"
       # Deliberately slow. The first movement test is one metre at the lowest
       # speed with an operator holding the remote.
+      #
+      # The full kinematic set is spelled out, including the limits that look
+      # redundant. DWB reads every one of these into its KinematicParameters
+      # and an unset entry is zero, not "no limit". max_speed_xy in particular
+      # bounds the magnitude of any translation, so leaving it out caps the
+      # robot at standing still: measured against the simulated base, DWB
+      # emitted 383 consecutive commands with vx exactly 0.0 while happily
+      # rotating, the progress checker then failed, and Nav2 span through
+      # recovery after recovery. Nothing in any log said "your velocity limit
+      # is zero" - it reads as a controller that cannot find a path.
+      #
+      # nav2_params_go2w.yaml, which this file was derived from, is missing
+      # them too.
       max_vel_x: 0.4
       min_vel_x: 0.0
+      max_vel_y: 0.0
+      min_vel_y: 0.0
       max_vel_theta: 1.2
-      min_vel_theta: 0.0
+      min_speed_xy: 0.0
+      max_speed_xy: 0.4
+      min_speed_theta: 0.0
       acc_lim_x: 1.5
+      acc_lim_y: 0.0
       acc_lim_theta: 2.5
+      decel_lim_x: -1.5
+      decel_lim_y: 0.0
+      decel_lim_theta: -2.5
       sim_time: 1.5
       vx_samples: 15
+      vy_samples: 1
       vtheta_samples: 30
       transform_tolerance: 0.2
       xy_goal_tolerance: 0.2

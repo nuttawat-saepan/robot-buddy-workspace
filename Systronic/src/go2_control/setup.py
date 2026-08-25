@@ -36,6 +36,8 @@ setup(
         ('share/' + package_name,
             ['LIVOX_DEPLOYMENT_PLAN.md']),
         ('share/' + package_name,
+            ['LIVOX_PREP_DAY_2026-08-25.md']),
+        ('share/' + package_name,
             glob.glob('*.yaml')),
         
         ('share/' + package_name + '/rviz',
@@ -138,6 +140,7 @@ setup(
         'lio_odom_relay = go2_control.lio_odom_relay:main',
         'sensor_watchdog = go2_control.sensor_watchdog:main',
         'apriltag_detect = go2_control.apriltag_detect:main',
+        'fake_base = go2_control.fake_base:main',
         'local_check = go2_control.local_check:main',
         'april_localizer = go2_control.april_localizer:main',
         'sim_safe_drive = go2_control.sim_safe_drive:main',
