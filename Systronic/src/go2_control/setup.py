@@ -137,6 +137,7 @@ setup(
         'bag_clock = go2_control.bag_clock:main',
         'lio_odom_relay = go2_control.lio_odom_relay:main',
         'sensor_watchdog = go2_control.sensor_watchdog:main',
+        'apriltag_detect = go2_control.apriltag_detect:main',
         'local_check = go2_control.local_check:main',
         'april_localizer = go2_control.april_localizer:main',
         'sim_safe_drive = go2_control.sim_safe_drive:main',

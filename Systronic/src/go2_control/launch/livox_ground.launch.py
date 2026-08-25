@@ -214,6 +214,6 @@ def generate_launch_description():
         DeclareLaunchArgument('drift_csv', default_value=''),
         DeclareLaunchArgument('enable_rviz', default_value='false'),
         DeclareLaunchArgument('rviz_config',
-                              default_value='livox_mapping.rviz'),
+                              default_value='livox_ground.rviz'),
         OpaqueFunction(function=_launch_setup),
     ])

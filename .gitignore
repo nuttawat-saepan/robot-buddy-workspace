@@ -26,6 +26,9 @@ Systronic/src/HesaiLidar_ROS_2.0/
 Systronic/src/go2w/
 Systronic/src/unitree_go/
 Systronic/src/fastlio_fake_sensor/
+# apriltag_msgs is a clone of christianrauch/apriltag_msgs. Its one local
+# change lives in src/go2_control/patches/apriltag_msgs/ instead.
+Systronic/src/apriltag_msgs/
 
 # Superseded and bulky, kept on disk only
 Systronic/src_old/

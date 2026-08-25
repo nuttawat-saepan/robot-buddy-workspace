@@ -206,10 +206,24 @@ class AprilLocalizer(Node):
                 AprilTagDetectionArray, self.detections_topic, self.detection_cb, 10
             )
 
+        # The scan rotation goes through the same gate as everything else that
+        # can move the robot. Publishing straight to /cmd_vel would bypass
+        # sensor_watchdog, which is the layer that stops the robot when the
+        # LiDAR or odometry dies - and a slow rotate-in-place looking for a tag
+        # is exactly when nobody is watching the terminal.
+        #
+        # The default matches sensor_watchdog's input, so the rotation is gated
+        # by sensor freshness and then by cmd_vel_node's own robot_ack. Three
+        # independent conditions have to hold before this turns a motor.
+        self.cmd_vel_topic = self.declare_parameter(
+            "cmd_vel_topic", "/cmd_vel_nav_preview"
+        ).value
+
         self.cmd_vel_pub = None
         if self.cmd_vel_armed:
-            self.cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
-            self.get_logger().warn("AprilTag scan motion is armed")
+            self.cmd_vel_pub = self.create_publisher(Twist, self.cmd_vel_topic, 10)
+            self.get_logger().warn(
+                f"AprilTag scan motion is armed, publishing to {self.cmd_vel_topic}")
         else:
             self.get_logger().warn("AprilTag scan motion is disabled")
         self.initial_pose_pub = self.create_publisher(

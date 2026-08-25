@@ -139,48 +139,116 @@ than to Nav2 directly.
 **Acceptance:** replay a bag, then kill the bag mid-run, and confirm the
 watchdog publishes zero within its timeout and latches to stopped.
 
-### 1.D Wi-Fi check script
+### 1.D Wi-Fi check script - done
 
-The 2026-08-19 numbers (33% loss, 395-1453 ms RTT) were taken while the point
-cloud was streaming. The link has never been measured idle, so it is unknown
-whether the Wi-Fi itself is usable.
+`scripts/check_robot_link.sh`. Run the ground station in `listen` mode, then
+the robot in `check` mode:
 
-**Do:** one script that reports, between the two machines:
-
-```text
-device-to-device reachable      client isolation is common on shared APs and
-                                blocks everything
-multicast reachable             ROS 2 discovery needs it; many APs filter it
-                                symptom: ping works, ros2 topic list is empty
-RTT idle, min/avg/max/jitter    jitter matters more than average for /cmd_vel
-throughput                      only to confirm headroom over 0.33 Mbps
+```bash
+./scripts/check_robot_link.sh listen                # ground station
+./scripts/check_robot_link.sh check <ground-ip>     # robot
 ```
 
-**Do not use shared or meeting Wi-Fi.** Use the Go2's own AP, or a small
-dedicated router that only these two machines join. That removes client
-isolation, multicast filtering, airtime contention and AP roaming in one move.
+It reports, in order, and stops at the first hard failure:
 
-### 1.E RViz configuration for the wireless link
+```text
+local state       ROS_DOMAIN_ID, RMW, and which interfaces CYCLONEDDS_URI binds
+1 reachability    distinguishes client isolation from an unreachable network
+2 latency         loss and jitter idle - the baseline never taken on 2026-08-19
+3 multicast       ros2 multicast send/receive, the thing discovery needs
+4 throughput      iperf3 if present; least important, 0.33 Mbps is all that is
+                  needed
+```
 
-Adding a PointCloud2 display on the ground station pulls the cloud across
-Wi-Fi and reproduces the 2026-08-19 failure exactly.
+Step 2 is the measurement that has been missing since the field day. The
+recorded 33% loss and 395-1453 ms RTT were taken while a point cloud was being
+streamed, so they say the cloud collapses the link and nothing about whether
+the link is usable idle.
 
-**Do:** an RViz config containing only `/map`, `/scan`, `/tf`, `/plan`,
-`/particlecloud` and the costmaps, with no cloud display of any kind, and a
-comment at the top of the file saying why.
+**Do not run the field day on shared or meeting Wi-Fi.** Client isolation and
+multicast filtering are both defaults on such networks and neither can be
+worked around from the robot. Use the Go2's own access point, or a small
+dedicated router that only the two machines join.
 
-### 1.F Check april_localizer against the new frame tree
+### 1.E RViz configuration for the wireless link - done
 
-`april_localizer.py` was written against the pre-Livox frame tree. The tree is
-now `map -> odom -> camera_init -> body -> base_link`.
+`rviz/livox_ground.rviz`, and it is what `livox_ground.launch.py` loads by
+default. Eight displays, no PointCloud2 of any kind, adding up to about
+0.4 Mbps. The file opens with a comment saying why nobody should add one.
 
-AprilTag is a **requirement** of this system, not a fallback that only becomes
-necessary if drift is too large. The measurements support that independently:
-FAST-LIO closes a 35 m loop 1.65 m out (4.72%), and AMCL still leaves 0.41 m
-mean and 0.98 m peak.
+The one that was found while writing it: `/scan` has to be subscribed
+BEST_EFFORT, because `pointcloud_to_laserscan` publishes with SensorDataQoS. A
+Reliable subscription connects to nothing and displays nothing, with no error -
+the same mismatch that made `sensor_watchdog` report a dead LiDAR while the
+sensor was healthy.
 
-**Do:** read the node against the current tree, decide which machine it runs
-on (see 1.G), and confirm the correction it applies lands in `map`.
+`rviz/livox_mapping.rviz` still has its two cloud displays and is for running
+on the same machine as FAST-LIO, never across the network.
+
+### 1.F AprilTag - reviewed and made to work
+
+The review found the AprilTag path was not merely mismatched with the new frame
+tree, it could not run at all. Three things were missing, and each failed
+quietly:
+
+```text
+apriltag_msgs         not in the Foxy apt repos. april_localizer catches the
+                      ImportError, logs once, and then never subscribes - so it
+                      starts cleanly and detects nothing, forever.
+a detector            ros-foxy-apriltag is the C library only, with no ROS node.
+                      apriltag_detect.py existed as an empty 0-line placeholder.
+base_link ->          camera.py stamps images camera_link and april_localizer
+camera_link           looks that transform up per detection. Nothing published
+                      it and the URDF has no camera link, so every detection
+                      would be discarded with a TF warning.
+```
+
+The last one predates the Livox migration; it was already broken.
+
+**What was done**
+
+`apriltag_msgs` is now cloned into `src/` and built, with its one Focal
+incompatibility recorded in `patches/apriltag_msgs/` - upstream requires CMake
+3.22 and Focal ships 3.16.3, which fails with no useful output. The board is
+also Focal, so the patch is needed there too.
+
+`go2_control/apriltag_detect.py` is the detector, written against `cv2.aruco`
+rather than building `apriltag_ros`. OpenCV is already a dependency and has
+carried the AprilTag dictionaries since 3.4, which leaves three message
+definitions as the only thing built from source - a much smaller thing to get
+working on aarch64.
+
+`livox_robot.launch.py` gained an `enable_camera_tf` argument publishing
+`base_link -> camera_link`. **It is off by default and its values are
+placeholders.** Measure the camera on the robot before enabling it: a wrong
+camera pose does not disable AprilTag, it makes AprilTag place the robot
+confidently in the wrong place, which is worse than not having it.
+
+`april_localizer`'s scan rotation now publishes to a configurable
+`cmd_vel_topic`, defaulting to `/cmd_vel_nav_preview`, instead of straight to
+`/cmd_vel`. It was the one path that bypassed `sensor_watchdog`, and a slow
+rotate-in-place hunting for a tag is exactly when nobody is watching.
+
+**Verified end to end**, with a synthetic tag, no hardware:
+
+```text
+tag 36h11 id 7, 240 px wide, focal 500, tag_size 0.16 m
+  implied range   500 * 0.16 / 240        = 0.333 m from the camera
+  camera offset   base_link + 0.30 m in x
+  tag map pose    (5.00, 2.00, yaw 0)
+  robot expected  5.00 - 0.333 - 0.30     = 4.367
+  /initialpose    x = 4.37, y = 2.00, frame map
+```
+
+That agreement exercises the corner ordering, the camera transform convention,
+`solvePnP` and the pose composition together. Corner order is the part worth
+guarding: `april_localizer` assumes top-left then clockwise, which is what
+`cv2.aruco.detectMarkers` returns, and any other order yields a pose that looks
+plausible and is wrong.
+
+**Still open:** the tag family must match the tags physically installed (36h11
+is the default here), tag poses have to be surveyed into the site map, and the
+camera transform has to be measured.
 
 ### 1.G Decide where the camera pipeline runs
 

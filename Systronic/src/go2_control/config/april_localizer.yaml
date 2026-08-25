@@ -7,6 +7,12 @@ april_localizer:
     map_frame: map
     base_frame: base_link
     camera_frame: camera_link
+
+    # Where the scan rotation publishes, when it is armed at all. Deliberately
+    # not /cmd_vel: this must pass through sensor_watchdog so the rotation
+    # stops if the LiDAR or odometry dies mid-scan. Must match nav_cmd_topic
+    # in livox_robot.launch.py.
+    cmd_vel_topic: /cmd_vel_nav_preview
     default_timeout: 5.0
     default_scan_timeout: 20.0
     rotation_speed: 0.25

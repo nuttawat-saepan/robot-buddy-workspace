@@ -179,6 +179,26 @@ def _launch_setup(context, *args, **kwargs):
             remappings=[('/cmd_vel', cmd_vel_topic)],
         ),
 
+        # base_link -> camera_link. AprilTag localisation cannot work without
+        # it: april_localizer looks up base_link <- camera_frame for every
+        # detection, camera.py stamps its images camera_link, and nothing in
+        # this workspace publishes that transform - the URDF has no camera link
+        # at all. Every detection would fail with
+        # "TF base_link<-camera_link failed".
+        #
+        # FIELD: the numbers below are placeholders and are certainly wrong.
+        # Measure the camera on the robot before enabling this. A wrong camera
+        # pose does not disable AprilTag, it makes AprilTag confidently place
+        # the robot in the wrong spot, which is worse than not having it.
+        Node(
+            package='tf2_ros', executable='static_transform_publisher',
+            name='base_to_camera', output='screen',
+            condition=IfCondition(LaunchConfiguration('enable_camera_tf')),
+            arguments=[arg('camera_x'), arg('camera_y'), arg('camera_z'),
+                       arg('camera_yaw'), arg('camera_pitch'), arg('camera_roll'),
+                       base_frame, arg('camera_frame')],
+        ),
+
         # Unitree read-only telemetry. publish_odom and publish_tf are false
         # because FAST-LIO owns odometry on this stack: two publishers of
         # odom -> base_link break the TF tree silently, with tf2 keeping
@@ -244,5 +264,20 @@ def generate_launch_description():
         DeclareLaunchArgument('robot_ack', default_value=''),
         DeclareLaunchArgument('unitree_interface', default_value='eth0'),
         DeclareLaunchArgument('enable_unitree_read', default_value='false'),
+        DeclareLaunchArgument(
+            'enable_camera_tf', default_value='false',
+            description='Publish base_link -> camera_link, which AprilTag '
+                        'localisation needs and nothing else provides. Off by '
+                        'default because the pose below has never been '
+                        'measured on this robot, and a wrong camera pose makes '
+                        'AprilTag place the robot confidently in the wrong '
+                        'place.'),
+        DeclareLaunchArgument('camera_frame', default_value='camera_link'),
+        DeclareLaunchArgument('camera_x', default_value='0.30'),
+        DeclareLaunchArgument('camera_y', default_value='0.0'),
+        DeclareLaunchArgument('camera_z', default_value='0.08'),
+        DeclareLaunchArgument('camera_yaw', default_value='0.0'),
+        DeclareLaunchArgument('camera_pitch', default_value='0.0'),
+        DeclareLaunchArgument('camera_roll', default_value='0.0'),
         OpaqueFunction(function=_launch_setup),
     ])
