@@ -1,0 +1,124 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 40
+      Color: 90; 90; 96
+      Line Style:
+        Value: Lines
+      Reference Frame: <Fixed Frame>
+    # The map as it builds. /cloud_registered is one scan per frame already
+    # placed in the world frame, so a long decay time is what makes the map
+    # accumulate on screen. Nothing here writes a file; the saved map still
+    # comes from save_pcd plus pcd_to_map.
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Map
+      Enabled: true
+      Topic:
+        Value: /cloud_registered
+        Depth: 20
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Style: Points
+      Size (Pixels): 1
+      Alpha: 1
+      Decay Time: 600
+      Position Transformer: XYZ
+      Color Transformer: AxisColor
+      Axis: Z
+      Autocompute Value Bounds:
+        Value: true
+      Use Fixed Frame: true
+      Selectable: false
+    # The current scan, so it is obvious whether the sensor is still alive when
+    # the accumulated map stops changing.
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Live scan
+      Enabled: true
+      Topic:
+        Value: /cloud_registered_body
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Style: Points
+      Size (Pixels): 2
+      Alpha: 1
+      Decay Time: 0
+      Position Transformer: XYZ
+      Color Transformer: FlatColor
+      Color: 255; 60; 60
+      Use Fixed Frame: true
+      Selectable: false
+    - Class: rviz_default_plugins/Map
+      Name: 2D map
+      Enabled: true
+      Topic:
+        Value: /map
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Alpha: 0.8
+      Color Scheme: map
+      Draw Behind: true
+    - Class: rviz_default_plugins/Odometry
+      Name: Odometry
+      Enabled: true
+      Topic:
+        Value: /Odometry
+        Depth: 100
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Keep: 300
+      Position Tolerance: 0.05
+      Angle Tolerance: 0.05
+      Covariance:
+        Value: false
+      Shape:
+        Value: Arrow
+        Alpha: 1
+        Color: 255; 220; 40
+        Shaft Length: 0.3
+        Shaft Radius: 0.03
+        Head Length: 0.1
+        Head Radius: 0.06
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Names: true
+      Show Axes: true
+      Show Arrows: false
+      Marker Scale: 0.6
+  Global Options:
+    # camera_init is where FAST-LIO started. It exists whether or not the
+    # odom/base_link bridge is running, so the view works either way.
+    Fixed Frame: camera_init
+    Background Color: 24; 24; 28
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Select
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Distance: 30
+      Pitch: 0.85
+      Yaw: 0.7
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+Window Geometry:
+  Height: 900
+  Width: 1500

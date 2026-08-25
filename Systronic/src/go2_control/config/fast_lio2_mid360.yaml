@@ -1,0 +1,81 @@
+# FAST-LIO2 for Livox Mid-360 on Go2.
+#
+# Derived from upstream FAST_LIO ROS2 config/mid360.yaml, with two deliberate
+# changes documented below: lidar_type and extrinsic_est_en.
+#
+# Runs against the fast_lio_livox package in ~/ws_fastlio_livox, not the
+# fast_lio package built from src/FAST_LIO_Hesai. That fork has the Livox and
+# MID360 handlers removed and cannot read this sensor.
+/**:
+    ros__parameters:
+        feature_extract_enable: false
+        point_filter_num: 3
+        max_iteration: 3
+        filter_size_surf: 0.5
+        filter_size_map: 0.5
+        cube_side_length: 1000.0
+        runtime_pos_log_enable: false
+        map_file_path: "./test.pcd"
+
+        common:
+            lid_topic: "/livox/lidar"
+            # Mid-360's own IMU. Preferred over /go2w/imu: it shares a housing
+            # and a clock with the laser, so there is no inter-device time
+            # offset to calibrate and the extrinsic below is a datasheet value
+            # rather than something that has to be measured on the robot.
+            imu_topic: "/livox/imu"
+            time_sync_en: false
+            time_offset_lidar_to_imu: 0.0
+
+        preprocess:
+            # 4 = MID360, which subscribes to sensor_msgs/PointCloud2.
+            # Upstream mid360.yaml ships 1 (AVIA), which subscribes to
+            # livox_ros_driver2/CustomMsg instead and would force the driver to
+            # xfer_format 1, leaving pointcloud_to_laserscan with nothing it can
+            # read. Type 4 lets one driver instance feed both LIO and the 2D
+            # projection.
+            #
+            # Cost of this choice: the MID360 handler derives per-point timing
+            # from yaw instead of using CustomMsg per-point offset_time, so
+            # deskewing is slightly coarser. If odometry proves too rough on
+            # hardware, switch to type 1 with xfer_format 1 and project
+            # /cloud_registered_body for the 2D scan instead.
+            lidar_type: 4
+            scan_line: 4
+            scan_rate: 10
+            timestamp_unit: 3
+            # FIELD: raise if the Go2 body appears in the map.
+            blind: 0.5
+
+        mapping:
+            acc_cov: 0.1
+            gyr_cov: 0.1
+            b_acc_cov: 0.0001
+            b_gyr_cov: 0.0001
+            fov_degree: 360.0
+            # Mid-360 is specified to 40 m at 10% reflectivity.
+            det_range: 40.0
+            # Upstream ships true. Set false here because online extrinsic
+            # estimation already degraded odometry on this robot with the
+            # Unitree L1 (see the comment in
+            # src/go2w/go2w_fast_lio2/config/fast_lio2_unilidar.yaml), and
+            # because the Mid-360 IMU-to-laser extrinsic below is a fixed
+            # published value that does not need estimating.
+            extrinsic_est_en: false
+            # Livox-published Mid-360 IMU offset relative to the laser origin.
+            extrinsic_T: [ -0.011, -0.02329, 0.04412 ]
+            extrinsic_R: [ 1., 0., 0.,
+                           0., 1., 0.,
+                           0., 0., 1.]
+
+        publish:
+            path_en: false
+            effect_map_en: false
+            map_en: true
+            scan_publish_en: true
+            dense_publish_en: false
+            scan_bodyframe_pub_en: true
+
+        pcd_save:
+            pcd_save_en: false
+            interval: -1

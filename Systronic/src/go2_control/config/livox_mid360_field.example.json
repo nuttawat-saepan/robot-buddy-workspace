@@ -1,0 +1,59 @@
+{
+  "_comment": [
+    "Field example for Livox Mid-360 via livox_ros_driver2.",
+    "Copy to livox_mid360_field.json and verify every FIELD value on site.",
+    "Unlike the Hesai driver this config is JSON, not YAML.",
+    "",
+    "Mid-360 IP is 192.168.1.1XX where XX is the last two digits of the serial",
+    "number printed on the sensor, so the ip below MUST be replaced before first",
+    "bringup. Upstream MID360_config.json ships 192.168.1.12 / host 192.168.1.5;",
+    "this file uses 192.168.1.100 / host 192.168.1.50 so a stale value is",
+    "obvious rather than silently matching someone else's rig.",
+    "",
+    "Sensor readout only. Do not enable robot motion from this stage."
+  ],
+
+  "lidar_summary_info": {
+    "lidar_type": 8
+  },
+
+  "MID360": {
+    "lidar_net_info": {
+      "cmd_data_port": 56100,
+      "push_msg_port": 56200,
+      "point_data_port": 56300,
+      "imu_data_port": 56400,
+      "log_data_port": 56500
+    },
+    "host_net_info": {
+      "_comment": "FIELD: host_ip must be this machine's static IP on the LiDAR subnet.",
+      "cmd_data_ip": "192.168.1.50",
+      "cmd_data_port": 56101,
+      "push_msg_ip": "192.168.1.50",
+      "push_msg_port": 56201,
+      "point_data_ip": "192.168.1.50",
+      "point_data_port": 56301,
+      "imu_data_ip": "192.168.1.50",
+      "imu_data_port": 56401,
+      "log_data_ip": "",
+      "log_data_port": 56501
+    }
+  },
+
+  "lidar_configs": [
+    {
+      "_comment": "FIELD: replace ip with 192.168.1.1XX from the sensor serial number.",
+      "ip": "192.168.1.100",
+      "pcl_data_type": 1,
+      "pattern_mode": 0,
+      "extrinsic_parameter": {
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0,
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    }
+  ]
+}

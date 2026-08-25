@@ -1,0 +1,28 @@
+pc2scan_livox:
+  ros__parameters:
+    target_frame: base_link
+    transform_tolerance: 0.05
+
+    # Mid-360 differs from XT16 in two ways that both force a wider slice:
+    #   1. Non-repetitive scanning: a single 10 Hz frame samples different
+    #      directions every time, so a thin band leaves gaps that flicker.
+    #   2. Vertical FOV is -7..+52 deg, not symmetric, so the horizontal plane
+    #      sits near the bottom edge of the sensor's coverage.
+    # FIELD: tune against a known wall before trusting this in Nav2.
+    min_height: -0.20
+    max_height: 0.20
+
+    angle_min: -3.14159
+    angle_max: 3.14159
+    # Coarser than the XT16 setting (0.0058). Finer bins mostly stay empty on a
+    # non-repetitive sensor and produce a ragged scan.
+    angle_increment: 0.0087
+
+    scan_time: 0.1
+
+    # FIELD: raise until the Go2 body stops appearing in /scan.
+    range_min: 0.5
+    range_max: 40.0
+
+    use_inf: true
+    inf_epsilon: 1.0

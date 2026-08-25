@@ -1,0 +1,25 @@
+pc2scan_hesai:
+  ros__parameters:
+    target_frame: base_scan
+    # target_frame: base_link
+    transform_tolerance: 0.05
+
+    # Slice the 3D cloud near the LiDAR's horizontal plane for 2D SLAM.
+    # A wide height band can include ground/self-hit returns and create a dark
+    # ring around the robot instead of a useful room outline.
+    min_height: -0.06
+    max_height: 0.06
+
+    angle_min: -3.14159
+    angle_max: 3.14159
+    angle_increment: 0.0058
+
+    scan_time: 0.1
+
+    # Temporary self-filter debug value for simulated 3D LiDAR mapping.
+    # Reduce after confirming the robot body no longer appears in /hesai_scan.
+    range_min: 0.7
+    range_max: 25.0
+
+    use_inf: true
+    inf_epsilon: 1.0

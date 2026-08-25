@@ -1,0 +1,24 @@
+april_localizer:
+  ros__parameters:
+    detections_topic: /detections
+    camera_info_topic: /camera/camera_info
+    request_topic: /localization/request
+    status_topic: /localization/status
+    map_frame: map
+    base_frame: base_link
+    camera_frame: camera_link
+    default_timeout: 5.0
+    default_scan_timeout: 20.0
+    rotation_speed: 0.25
+    min_detections: 3
+    max_detection_spread: 0.25
+    max_detection_yaw_spread: 0.26   # 15 deg
+    max_pose_jump: 3.0
+    max_yaw_jump: 1.05               # 60 deg
+    initial_pose_covariance: 0.05
+    tag_size: 0.16
+
+    # Tag poses are sent dynamically from the mission payload (tagPoses field).
+    # This YAML value is used as fallback only when no tagPoses are sent.
+    # Format: '{"<tagId>":{"x":0.0,"y":0.0,"yaw":0.0}}'
+    tag_map_poses: '{}'

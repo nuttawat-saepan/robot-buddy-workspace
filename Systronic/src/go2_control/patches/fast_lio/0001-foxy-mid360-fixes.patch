@@ -1,0 +1,101 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,5 +1,5 @@
+ cmake_minimum_required(VERSION 3.8)
+-project(fast_lio)
++project(fast_lio_livox)
+ 
+ if(NOT CMAKE_BUILD_TYPE)
+   set(CMAKE_BUILD_TYPE Release)
+--- a/package.xml
++++ b/package.xml
+@@ -1,6 +1,6 @@
+ <?xml version="1.0"?>
+ <package format="3">
+-  <name>fast_lio</name>
++  <name>fast_lio_livox</name>
+   <version>0.0.0</version>
+ 
+   <description>
+--- a/include/common_lib.h
++++ b/include/common_lib.h
+@@ -5,7 +5,7 @@
+ #include <Eigen/Eigen>
+ #include <pcl/point_types.h>
+ #include <pcl/point_cloud.h>
+-#include <fast_lio/msg/pose6_d.hpp>
++#include <fast_lio_livox/msg/pose6_d.hpp>
+ #include <sensor_msgs/msg/imu.hpp>
+ #include <nav_msgs/msg/odometry.hpp>
+ 
+@@ -31,7 +31,7 @@
+ #define STD_VEC_FROM_EIGEN(mat)  vector<decltype(mat)::Scalar> (mat.data(), mat.data() + mat.rows() * mat.cols())
+ #define DEBUG_FILE_DIR(name)     (string(string(ROOT_DIR) + "Log/"+ name))
+ 
+-typedef fast_lio::msg::Pose6D Pose6D;
++typedef fast_lio_livox::msg::Pose6D Pose6D;
+ typedef pcl::PointXYZINormal PointType;
+ typedef pcl::PointCloud<PointType> PointCloudXYZI;
+ typedef vector<PointType, Eigen::aligned_allocator<PointType>>  PointVector;
+--- a/src/laserMapping.cpp
++++ b/src/laserMapping.cpp
+@@ -512,8 +512,12 @@
+ 
+     /**************** save map ****************/
+     /* 1. make sure you have enough memories
+-    /* 2. noted that pcd save will influence the real-time performences **/
+-    /*
++     * 2. noted that pcd save will influence the real-time performences
++     *
++     * Uncommented locally. The ROS2 branch ships this block commented out, so
++     * pcl_wait_save stays empty and the save at the end of main() never fires:
++     * pcd_save_en could be set and no .pcd would ever appear. Cost is memory
++     * plus a little loop time, which is why pcd_save_en defaults to false. */
+     if (pcd_save_en)
+     {
+         int size = feats_undistort->points.size();
+@@ -540,7 +544,6 @@
+             scan_wait_num = 0;
+         }
+     }
+-    */
+ }
+ 
+ void publish_frame_body(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_body)
+@@ -1112,7 +1115,7 @@
+         if (map_pub_en) publish_map(pubLaserCloudMap_);
+     }
+ 
+-    void map_save_callback(std_srvs::srv::Trigger::Request::ConstSharedPtr req, std_srvs::srv::Trigger::Response::SharedPtr res)
++    void map_save_callback(std_srvs::srv::Trigger::Request::SharedPtr req, std_srvs::srv::Trigger::Response::SharedPtr res)
+     {
+         RCLCPP_INFO(this->get_logger(), "Saving map to %s...", map_file_path.c_str());
+         if (pcd_save_en)
+@@ -1158,8 +1161,14 @@
+ {
+     rclcpp::init(argc, argv);
+ 
+-    signal(SIGINT, SigHandle);
+-
++    // Upstream installs SigHandle here, which replaces the handler rclcpp::init
++    // put in place. SigHandle then calls rclcpp::shutdown() from inside the
++    // signal handler while the main thread is blocked in spin(), which
++    // deadlocks on Foxy: the process never leaves spin(), so the PCD save below
++    // never runs and Ctrl-C only ends the run when something escalates to
++    // SIGKILL. Leaving rclcpp's own handler installed makes spin() return
++    // normally and lets the save happen. SigHandle is kept above because
++    // flg_exit is read elsewhere.
+     rclcpp::spin(std::make_shared<LaserMappingNode>());
+ 
+     if (rclcpp::ok())
+--- a/src/preprocess.h
++++ b/src/preprocess.h
+@@ -127,7 +127,7 @@
+     (float, x, x)
+     (float, y, y)
+     (float, z, z)
+-    (float, reflectivity, reflectivity)
++    (float, reflectivity, intensity)   // livox_ros_driver2 publishes this field as "intensity"
+     (uint8_t, tag, tag)
+     (uint8_t, line, line)
+ )

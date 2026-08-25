@@ -1,0 +1,19 @@
+pc2scan_hesai:
+  ros__parameters:
+    target_frame: base_scan
+    transform_tolerance: 0.05
+
+    min_height: 0.03
+    max_height: 0.10
+
+    angle_min: -3.14159
+    angle_max: 3.14159
+    angle_increment: 0.0058
+
+    scan_time: 0.1
+
+    range_min: 0.35
+    range_max: 10.0
+
+    use_inf: true
+    inf_epsilon: 1.0

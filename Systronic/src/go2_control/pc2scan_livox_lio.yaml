@@ -1,0 +1,48 @@
+# Projection of the FAST-LIO deskewed cloud into the 2D /scan AMCL consumes.
+#
+# Separate from pc2scan_livox.yaml on purpose. That one projects the raw
+# /livox/lidar; this one projects /cloud_registered_body, and the two are not
+# interchangeable:
+#
+#   raw /livox/lidar          36-49% of beams populated, unstable frame to frame
+#   /cloud_registered_body    43.0 min / 54.5 mean / 60.9 max %, std 2.9
+#
+# (LIVOX_BENCH_DAY_2026-08-20.md section 6, 1742 scans from 02_loop.) The low
+# standard deviation is what matters: AMCL subsamples to about 60 beams, so a
+# density that barely moves frame to frame is worth more than a high mean.
+#
+# The structural consequence is that FAST-LIO has to be running for this to
+# publish anything at all, on the robot as well as on the bench.
+pc2scan_livox_lio:
+  ros__parameters:
+    # base_link is levelled by the body->base_link bridge in
+    # livox_amcl.launch.py and sits on the floor, so the band below is height
+    # above the floor rather than height relative to a tilted sensor.
+    target_frame: base_link
+    transform_tolerance: 0.05
+
+    # Matches the band livox_02loop was rasterised from: pcd_to_map was given
+    # --z-min -0.18 --z-max 0.62 in the levelled sensor frame with the sensor
+    # 0.43 m up, which is 0.25 to 1.05 m above the floor. AMCL correlates the
+    # scan against that map, so a scan cut at a different height would be
+    # comparing two different slices of the room.
+    min_height: 0.25
+    max_height: 1.05
+
+    angle_min: -3.14159
+    angle_max: 3.14159
+    # 723 beams over the full circle, as measured in section 2 of the
+    # migration note. Finer bins mostly stay empty on a non-repetitive sensor.
+    angle_increment: 0.0087
+
+    scan_time: 0.1
+
+    # FIELD: raise until the Go2 body stops appearing in /scan. On the handheld
+    # bags this only has to clear the operator.
+    range_min: 0.5
+    # Well past the 24 x 20 m room in livox_02loop. AMCL clamps to
+    # laser_max_range in amcl_livox.yaml anyway.
+    range_max: 40.0
+
+    use_inf: true
+    inf_epsilon: 1.0

@@ -1,0 +1,85 @@
+# slam_toolbox mapping from the projected Mid-360 scan.
+#
+# Why this exists at all: pcd_to_map and livox_grid_map both mark only the
+# cells a beam stopped in. Neither marks the cells a beam passed through, so
+# neither produces real free space - pcd_to_map fakes it afterwards with a
+# flood fill seeded where the robot started, which is a guess about
+# connectivity rather than a measurement of what the sensor saw.
+#
+# slam_toolbox ray traces every beam from the sensor origin, so free space
+# comes out of the data. That is the whole point of using it here.
+#
+# See the note in config/nav2_livox_go2.yaml about use_sim_time: it is set
+# nowhere in this file on purpose, because an explicitly named node section
+# beats the `/**` wildcard the launch file writes its overrides under.
+slam_toolbox:
+  ros__parameters:
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_link
+    scan_topic: /scan
+    mode: mapping
+
+    debug_logging: false
+    throttle_scans: 1
+    transform_publish_period: 0.02
+    map_update_interval: 2.0
+
+    # The room in these bags is about 24 x 20 m, so nothing beyond 20 m is a
+    # feature. This also bounds how far a single beam may carve free space,
+    # which matters more than usual here: about 46% of the beams in the
+    # projected Mid-360 scan are empty, and a long ray traced on a bad match
+    # writes a long stripe of wrong free space.
+    max_laser_range: 20.0
+    resolution: 0.05
+    minimum_time_interval: 0.2
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+
+    # FAST-LIO already supplies deskewed, IMU-fused odometry, so the scan
+    # matcher is refining a good prior rather than tracking from scratch.
+    # Left on because it is also what closes loops; if the sparse scan turns
+    # out to make matching worse than the LIO prior, turn it off and the map
+    # becomes a pure ray-traced accumulation of the LIO trajectory.
+    use_scan_matching: true
+    use_scan_barycenter: true
+    # Every 0.3 m or 0.15 rad. Denser than the slam_toolbox default because
+    # the run is short and the sensor is close to the floor, so coverage
+    # changes quickly with position.
+    minimum_travel_distance: 0.3
+    minimum_travel_heading: 0.15
+    scan_buffer_size: 30
+    scan_buffer_maximum_scan_distance: 20.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+    loop_search_maximum_distance: 3.0
+    do_loop_closing: true
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true

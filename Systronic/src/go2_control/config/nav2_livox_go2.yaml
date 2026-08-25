@@ -1,0 +1,240 @@
+# Nav2 for the Go2 on the Livox Mid-360 stack, Foxy.
+#
+# Derived from nav2_params_go2w.yaml, which is the only Nav2 parameter file in
+# this package that Foxy can actually load. nav2go2_params.yaml is written for
+# a much newer Nav2 - MPPIController, SmacPlanner2D, DenoiseLayer,
+# behavior_server, smoother_server - none of which exist in Foxy, and it still
+# carries a literal `<back_obstacle_layer>` placeholder. Do not point this
+# stack at it.
+#
+# amcl and map_server are deliberately absent: livox_amcl.launch.py owns them,
+# with config/amcl_livox.yaml.
+#
+# IMPORTANT: no node section below sets use_sim_time.
+#
+# launch_ros writes parameter dictionaries under the `/**` wildcard, and rcl
+# gives an explicitly named node section precedence over `/**` regardless of
+# the order the parameter files are passed in. So a `use_sim_time: false` under
+# `controller_server:` here would silently beat the value the launch file
+# derives from its `replay` argument, and no amount of launch argument would
+# change it.
+#
+# That failure is quiet and expensive: on a replayed bag the TF tree carries
+# the bag's timestamps while the node reads the wall clock, and Nav2 reports
+# `Invalid frame ID "odom" ... frame does not exist` - which reads like a
+# missing transform, not like a clock problem. livox_nav2.launch.py owns
+# use_sim_time for every node here.
+
+bt_navigator:
+  ros__parameters:
+    global_frame: map
+    robot_base_frame: base_link
+    odom_topic: /odom
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    # default_bt_xml_filename is deliberately NOT set here. Foxy's
+    # bt_navigator opens the string as given rather than resolving it against
+    # the nav2_bt_navigator share directory, so it has to be an absolute path,
+    # and hard-coding one into a checked-in file would tie it to this machine.
+    # livox_nav2.launch.py resolves it and passes it in.
+    #
+    # It cannot simply be overridden from the launch file while also living
+    # here: launch_ros writes parameter dicts under the `/**` wildcard, and rcl
+    # gives an explicitly named node section precedence over `/**` regardless
+    # of the order the files are passed in. An entry here would silently win
+    # over the resolved path and the node would fail to configure.
+    # The full Foxy set. The trimmed list inherited from nav2_params_go2w.yaml
+    # was missing nav2_rate_controller_bt_node, and the stock
+    # navigate_w_replanning_and_recovery.xml uses a RateController on line 9,
+    # so bt_navigator threw "Node not recognized: RateController" during
+    # configure and took the whole lifecycle bringup with it. Loading a plugin
+    # that a given tree never uses costs nothing; missing one is fatal, so this
+    # stays complete rather than tailored to the current tree.
+    plugin_lib_names:
+      - nav2_compute_path_to_pose_action_bt_node
+      - nav2_follow_path_action_bt_node
+      - nav2_back_up_action_bt_node
+      - nav2_spin_action_bt_node
+      - nav2_wait_action_bt_node
+      - nav2_clear_costmap_service_bt_node
+      - nav2_is_stuck_condition_bt_node
+      - nav2_goal_reached_condition_bt_node
+      - nav2_goal_updated_condition_bt_node
+      - nav2_initial_pose_received_condition_bt_node
+      - nav2_reinitialize_global_localization_service_bt_node
+      - nav2_rate_controller_bt_node
+      - nav2_distance_controller_bt_node
+      - nav2_speed_controller_bt_node
+      - nav2_truncate_path_action_bt_node
+      - nav2_goal_updater_node_bt_node
+      - nav2_recovery_node_bt_node
+      - nav2_pipeline_sequence_bt_node
+      - nav2_round_robin_node_bt_node
+      - nav2_transform_available_condition_bt_node
+      - nav2_time_expired_condition_bt_node
+      - nav2_distance_traveled_condition_bt_node
+
+controller_server:
+  ros__parameters:
+    # 5 Hz against the 10 Hz scan. Raising this does not buy anything: the
+    # costmap cannot update faster than the sensor.
+    controller_frequency: 5.0
+    min_x_velocity_threshold: 0.001
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.5
+
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.2
+      movement_time_allowance: 20.0
+
+    goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      stateful: false
+      # AMCL leaves 0.65 m of residual on the bench data
+      # (LIVOX_AMCL_REPLAY_2026-08-25.md). A goal tolerance tighter than that
+      # residual cannot be met by anything except luck, so 0.25 m here is
+      # aspirational until loop closure is re-measured with the sensor bolted
+      # on. FIELD: check this against the residual measured on the robot.
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.25
+
+    FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"
+      # Deliberately slow. The first movement test is one metre at the lowest
+      # speed with an operator holding the remote.
+      max_vel_x: 0.4
+      min_vel_x: 0.0
+      max_vel_theta: 1.2
+      min_vel_theta: 0.0
+      acc_lim_x: 1.5
+      acc_lim_theta: 2.5
+      sim_time: 1.5
+      vx_samples: 15
+      vtheta_samples: 30
+      transform_tolerance: 0.2
+      xy_goal_tolerance: 0.2
+      trans_stopped_velocity: 0.05
+      critics: ["RotateToGoal", "ObstacleFootprint", "GoalAlign", "PathAlign",
+                "PathDist", "GoalDist"]
+      PathAlign.scale: 20.0
+      GoalAlign.scale: 20.0
+      PathDist.scale: 20.0
+      GoalDist.scale: 20.0
+      RotateToGoal.scale: 30.0
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      global_frame: odom
+      robot_base_frame: base_link
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      rolling_window: true
+      width: 5
+      height: 5
+      resolution: 0.05
+      # Go2 body is about 0.70 x 0.31 m. The 0.50 m width is margin for the
+      # legs, which swing outside the body envelope. FIELD: measure the real
+      # swing before trusting a narrow gap.
+      footprint: "[[0.35,0.25],[0.35,-0.25],[-0.35,-0.25],[-0.35,0.25]]"
+      plugins: ["obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        observation_sources: scan
+        scan:
+          topic: /scan
+          data_type: "LaserScan"
+          marking: True
+          clearing: True
+          # About 46% of the beams in the projected Mid-360 scan are empty at
+          # any instant, and pc2scan_livox_lio.yaml sets use_inf: true so they
+          # arrive as +inf. inf_is_valid stays false (the default), which makes
+          # the costmap discard them rather than treat them as a maximum-range
+          # return. That distinction matters here more than on a repetitive
+          # sensor: treating those beams as valid would clear real obstacles
+          # out of the costmap several times a second.
+          inf_is_valid: false
+          obstacle_max_range: 6.0
+          raytrace_max_range: 7.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        inflation_radius: 0.35
+        cost_scaling_factor: 2.0
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      global_frame: map
+      robot_base_frame: base_link
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      resolution: 0.05
+      footprint: "[[0.35,0.25],[0.35,-0.25],[-0.35,-0.25],[-0.35,0.25]]"
+      track_unknown_space: true
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        observation_sources: scan
+        scan:
+          topic: /scan
+          data_type: "LaserScan"
+          marking: True
+          clearing: True
+          inf_is_valid: false
+          obstacle_max_range: 6.0
+          raytrace_max_range: 7.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        inflation_radius: 0.4
+        cost_scaling_factor: 3.0
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 10.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      tolerance: 0.5
+      use_astar: true
+      # The bench map livox_02loop is only 7.4% free, 9.2% occupied and the
+      # rest unknown - pcd_to_map can only mark free what the flood fill
+      # reached. With allow_unknown false almost no goal is reachable on it.
+      #
+      # This is true for the bench artefact and must be reconsidered for a
+      # site map: allowing planning through unknown space means the planner
+      # will route through areas nothing has ever observed. Acceptable while
+      # /cmd_vel is disconnected and a human is reading the path off RViz;
+      # not acceptable for autonomous movement on a real site.
+      allow_unknown: true
+
+recoveries_server:
+  ros__parameters:
+    recovery_plugins: ["spin", "backup", "wait"]
+    spin:
+      plugin: "nav2_recoveries/Spin"
+    backup:
+      plugin: "nav2_recoveries/BackUp"
+    wait:
+      plugin: "nav2_recoveries/Wait"
+    max_rotational_vel: 1.5
+    min_rotational_vel: 0.3
+
+waypoint_follower:
+  ros__parameters:
+    loop_rate: 20
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: True
+      # main.py drives its own capture spin at each waypoint rather than
+      # relying on this, so the pause here is only settling time.
+      waypoint_pause_duration: 200

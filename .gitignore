@@ -1,0 +1,43 @@
+# colcon build products
+build/
+install/
+log/
+
+# python
+__pycache__/
+*.pyc
+
+# FAST-LIO runtime output
+**/PCD/
+**/Log/
+
+# recorded data. Back these up to external storage, not into git:
+# 02_loop alone is 909 MB and does not compress usefully.
+*.db3
+*.db3-shm
+*.db3-wal
+
+# Third-party sources cloned from upstream. They are large, they are not our
+# work, and any local change to them belongs in a patch file under
+# src/go2_control/patches/ so it is reviewable - see patches/fast_lio/ for the
+# pattern. Re-clone them rather than tracking them here.
+Systronic/src/FAST_LIO_Hesai/
+Systronic/src/HesaiLidar_ROS_2.0/
+Systronic/src/go2w/
+Systronic/src/unitree_go/
+Systronic/src/fastlio_fake_sensor/
+
+# Superseded and bulky, kept on disk only
+Systronic/src_old/
+Systronic/Video/
+
+# editor
+.vscode/
+*.swp
+
+# node
+node_modules/
+
+# videos and slides, large and not source
+*.mp4
+*.pptx
