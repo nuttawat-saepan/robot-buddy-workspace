@@ -392,6 +392,22 @@ human reading the output - see `patches/fast_lio/README.md`.
 
 ## Part 2 - Board Bring-Up (board needed, robot does not walk)
 
+**The board is reachable over the sensor cable.** Probing 192.168.123.x from
+the MiniPC's `enp3s0` on 2026-08-25 found the Mid-360 at .20 and the Unitree
+board at .161 with sshd listening - that subnet is the Go2's own network, not a
+private LiDAR link. So Part 2 needs no wireless link and no site visit beyond
+having the robot on the bench:
+
+```bash
+./scripts/deploy_to_board.sh sys20@192.168.123.161 --dry-run
+./scripts/deploy_to_board.sh sys20@192.168.123.161
+```
+
+This matters for sequencing. The board build has been the one blocker on the
+two-machine deployment, and it turns out not to depend on the Wi-Fi question at
+all. Do it over the cable, then bring the wireless link up afterwards knowing
+the software already works.
+
 ### 2.1 Build the driver
 
 Livox-SDK2, then `livox_ros_driver2` with `./build.sh ROS2`. This alone
