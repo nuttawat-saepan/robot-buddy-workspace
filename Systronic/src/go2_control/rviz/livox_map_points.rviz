@@ -1,0 +1,87 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 40
+      Color: 90; 90; 96
+      Line Style:
+        Value: Lines
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Replay map walls
+      Enabled: true
+      Topic:
+        Value: /map_points
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Style: Points
+      Size (Pixels): 3
+      Alpha: 1
+      Decay Time: 0
+      Position Transformer: XYZ
+      Color Transformer: FlatColor
+      Color: 20; 20; 20
+      Use Fixed Frame: true
+      Selectable: false
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Global costmap points
+      Enabled: true
+      Topic:
+        Value: /global_costmap_points
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Style: Points
+      Size (Pixels): 3
+      Alpha: 0.7
+      Decay Time: 0
+      Position Transformer: XYZ
+      Color Transformer: FlatColor
+      Color: 40; 120; 255
+      Use Fixed Frame: true
+      Selectable: false
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Local costmap points
+      Enabled: true
+      Topic:
+        Value: /local_costmap_points
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Style: Points
+      Size (Pixels): 4
+      Alpha: 0.8
+      Decay Time: 0
+      Position Transformer: XYZ
+      Color Transformer: FlatColor
+      Color: 255; 80; 40
+      Use Fixed Frame: true
+      Selectable: false
+  Global Options:
+    Fixed Frame: map
+    Background Color: 238; 238; 238
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Select
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Scale: 35
+      X: -3.2
+      Y: -5.0
+Window Geometry:
+  Height: 900
+  Width: 1200
