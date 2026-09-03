@@ -1,0 +1,120 @@
+# LOW-CPU PROFILE - amcl_livox.yaml
+#
+# Same stack, fewer cycles. For the Unitree board, which has 4 cores and must
+# leave room for Unitree's own leg controller. Every value here trades response
+# time for CPU; none of them changes what the robot is allowed to do, and the
+# speed limits and safety gates are untouched.
+#
+# Use only after ./scripts/measure_board_load.sh reports OVER. Running slower
+# than necessary makes navigation worse for no reason.
+#
+# Changed from amcl_livox.yaml, with the original in a comment beside each:
+#     max_particles  3000 -> 1500   halves the filter's cost
+#     min_particles   500 -> 300
+#     max_beams        60 -> 40     fewer ray comparisons per update
+#
+# The alpha values and update thresholds are NOT changed: those decide how
+# accurate localisation is, not how much it costs.
+
+# AMCL against a map built by pcd_to_map from a FAST-LIO run.
+#
+# Written for Foxy's nav2_amcl 0.4.7. Two parameter names differ from the
+# Galactic-and-later spelling that nav2_params.yaml in this package uses:
+# robot_model_type takes "differential", not
+# "nav2_amcl::DifferentialMotionModel", and there is no omnidirectional model
+# to choose. Copying the newer spelling in gets the node rejected at startup.
+# No node section here sets use_sim_time - see the note in
+# config/nav2_livox_go2.yaml. An explicitly named section beats the `/**`
+# wildcard that launch_ros writes parameter dicts under, so a value here would
+# override livox_amcl.launch.py's `replay` argument and could not be changed
+# from the command line.
+amcl:
+  ros__parameters:
+    global_frame_id: "map"
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+    scan_topic: "/scan"
+
+    # AMCL owns map->odom. Everything below odom - odom->camera_init,
+    # camera_init->body, body->base_link - comes from FAST-LIO and the two
+    # static bridges in livox_amcl.launch.py.
+    tf_broadcast: true
+    # The projected scan carries the bag's own timestamps and arrives at 10 Hz.
+    # 1.0 s is generous, but a replay competing with FAST-LIO for CPU is not
+    # the place to be tight about it.
+    transform_tolerance: 1.0
+
+    # Only one motion model exists on Foxy, and it is the wrong one for a
+    # handheld walk: 02_loop was carried, so it sidesteps and rotates in ways a
+    # differential base cannot. The alphas below are raised above the 0.2
+    # defaults to stop the filter being over-confident about that motion. On
+    # the robot, where the motion really is differential, drop them back.
+    robot_model_type: "differential"
+    alpha1: 0.10   # rotation noise from rotation
+    alpha2: 0.4    # rotation noise from translation
+    alpha3: 0.4    # translation noise from translation
+    alpha4: 0.08   # translation noise from rotation
+    alpha5: 0.2
+
+    # Likelihood field rather than beam: the projected Mid-360 scan has roughly
+    # half its beams empty at any instant, and the beam model reads a missing
+    # return as evidence, while the likelihood field simply skips it.
+    laser_model_type: "likelihood_field"
+    laser_likelihood_max_dist: 2.0
+    # The room in livox_02loop is about 24 x 20 m, so nothing beyond 20 m is
+    # ever a map feature.
+    laser_max_range: 20.0
+    laser_min_range: 0.5
+    # Of the ~723 beams, ~54% carry a return. 60 is the usual AMCL subsample
+    # and is what the scan-quality measurement in the bench note was judged
+    # against.
+    max_beams: 40                     # lowcpu, was 60
+    z_hit: 0.5
+    z_rand: 0.5
+    z_max: 0.05
+    z_short: 0.05
+    sigma_hit: 0.2
+    lambda_short: 0.1
+
+    do_beamskip: false
+    beam_skip_distance: 0.5
+    beam_skip_error_threshold: 0.9
+    beam_skip_threshold: 0.3
+
+    min_particles: 300                # lowcpu, was 500
+    max_particles: 1500               # lowcpu, was 3000
+    pf_err: 0.05
+    pf_z: 0.99
+    resample_interval: 1
+    # Updating this often is wasteful on a robot and exactly right on a bench
+    # replay, where the point is to watch the correction move.
+    update_min_d: 0.20
+    update_min_a: 0.10
+    save_pose_rate: 0.5
+
+    # No recovery from a kidnap. Deliberate for a measurement run: a global
+    # reset partway through would replace the drift being measured with a
+    # relocalisation event and make the numbers meaningless.
+    recovery_alpha_slow: 0.0
+    recovery_alpha_fast: 0.0
+
+    # The map is loaded once from map_server. Nothing republishes it.
+    first_map_only_: false
+
+    # Seeded from the launch file rather than from RViz, so a replay run needs
+    # no operator input and is repeatable. The map was rasterised in FAST-LIO's
+    # own levelled world frame, so at t=0 map and odom coincide and the origin
+    # is the correct seed - see livox_amcl.launch.py.
+    set_initial_pose: true
+    always_reset_initial_pose: true
+    initial_pose.x: 0.0
+    initial_pose.y: 0.0
+    initial_pose.z: 0.0
+    initial_pose.yaw: 0.0
+
+map_server:
+  ros__parameters:
+    # yaml_filename is supplied by the launch file so the map can be swapped
+    # without editing this file.
+    topic_name: "map"
+    frame_id: "map"

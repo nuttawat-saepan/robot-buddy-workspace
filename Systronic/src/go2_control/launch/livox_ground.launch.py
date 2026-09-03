@@ -77,7 +77,9 @@ def _launch_setup(context, *args, **kwargs):
     if not os.path.isabs(nav2_params):
         nav2_params = os.path.join(go2_share, 'config', nav2_params)
 
-    amcl_param = os.path.join(go2_share, 'config', 'amcl_livox.yaml')
+    amcl_param = arg('amcl_params_file')
+    if not os.path.isabs(amcl_param):
+        amcl_param = os.path.join(go2_share, 'config', amcl_param)
 
     # Foxy's bt_navigator opens default_bt_xml_filename as given rather than
     # resolving it against the nav2_bt_navigator share directory, so a bare
@@ -198,6 +200,11 @@ def generate_launch_description():
             'replay', default_value='true',
             description='Follow the bag clock. Must match '
                         'livox_robot.launch.py.'),
+        DeclareLaunchArgument(
+            'amcl_params_file', default_value='amcl_livox.yaml',
+            description='AMCL parameter file. A bare name is looked up in the '
+                        'package config/ directory. Pass amcl_livox_lowcpu.yaml '
+                        'when measure_board_load.sh reports OVER.'),
         DeclareLaunchArgument('scan_topic', default_value='/scan'),
         DeclareLaunchArgument('odom_topic', default_value='/odom'),
         DeclareLaunchArgument('map_frame', default_value='map'),

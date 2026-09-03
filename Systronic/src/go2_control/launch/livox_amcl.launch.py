@@ -109,7 +109,9 @@ def _launch_setup(context, *args, **kwargs):
     if not os.path.isabs(map_yaml):
         map_yaml = os.path.join(go2_share, 'map', map_yaml)
 
-    amcl_param = os.path.join(go2_share, 'config', 'amcl_livox.yaml')
+    amcl_param = arg('amcl_params_file')
+    if not os.path.isabs(amcl_param):
+        amcl_param = os.path.join(go2_share, 'config', amcl_param)
     pc2scan_param = os.path.join(go2_share, 'pc2scan_livox_lio.yaml')
     replay = arg('replay').lower() in ('true', '1')
     # Sim time is not a separate choice from replaying: without a bag there is
@@ -250,6 +252,11 @@ def generate_launch_description():
                         'cloud, not the raw /livox/lidar: measured beam fill '
                         'is 54.5% mean with std 2.9, against 36-49% and '
                         'unstable for the raw cloud.'),
+        DeclareLaunchArgument(
+            'amcl_params_file', default_value='amcl_livox.yaml',
+            description='AMCL parameter file. A bare name is looked up in the '
+                        'package config/ directory. Pass amcl_livox_lowcpu.yaml '
+                        'when measure_board_load.sh reports OVER.'),
         DeclareLaunchArgument('scan_topic', default_value='/scan'),
         DeclareLaunchArgument(
             'lio_pitch_deg', default_value='10.26',
