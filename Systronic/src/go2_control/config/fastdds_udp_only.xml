@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <!-- Keep the local Livox stack off Fast DDS shared memory. Foxy's shared
+       memory transport can retain locked ports after an unclean participant
+       exit, while UDP on loopback is stable for this single-MiniPC pipeline. -->
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>udp_loopback</transport_id>
+      <type>UDPv4</type>
+    </transport_descriptor>
+  </transport_descriptors>
+  <participant profile_name="udp_loopback_participant" is_default_profile="true">
+    <rtps>
+      <userTransports>
+        <transport_id>udp_loopback</transport_id>
+      </userTransports>
+      <useBuiltinTransports>false</useBuiltinTransports>
+    </rtps>
+  </participant>
+</profiles>

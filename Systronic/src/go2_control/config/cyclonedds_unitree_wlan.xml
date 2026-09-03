@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain id="any">
+    <General>
+      <!-- ROS 2 Foxy's CycloneDDS 0.7 uses this legacy element.  The newer
+           <Interfaces>/<NetworkInterface> syntax prevents it from creating
+           a participant at all. -->
+      <NetworkInterfaceAddress>wlp4s0</NetworkInterfaceAddress>
+    </General>
+    <Discovery>
+      <Peers>
+        <Peer address="192.168.68.70" />
+      </Peers>
+    </Discovery>
+  </Domain>
+</CycloneDDS>
