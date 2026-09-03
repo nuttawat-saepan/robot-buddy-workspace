@@ -32,10 +32,10 @@ amcl:
     # defaults to stop the filter being over-confident about that motion. On
     # the robot, where the motion really is differential, drop them back.
     robot_model_type: "differential"
-    alpha1: 0.4    # rotation noise from rotation
+    alpha1: 0.10   # rotation noise from rotation
     alpha2: 0.4    # rotation noise from translation
     alpha3: 0.4    # translation noise from translation
-    alpha4: 0.4    # translation noise from rotation
+    alpha4: 0.08   # translation noise from rotation
     alpha5: 0.2
 
     # Likelihood field rather than beam: the projected Mid-360 scan has roughly
@@ -71,7 +71,7 @@ amcl:
     # Updating this often is wasteful on a robot and exactly right on a bench
     # replay, where the point is to watch the correction move.
     update_min_d: 0.20
-    update_min_a: 0.20
+    update_min_a: 0.10
     save_pose_rate: 0.5
 
     # No recovery from a kidnap. Deliberate for a measurement run: a global

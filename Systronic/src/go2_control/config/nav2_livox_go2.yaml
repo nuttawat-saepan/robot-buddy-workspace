@@ -120,17 +120,19 @@ controller_server:
       #
       # nav2_params_go2w.yaml, which this file was derived from, is missing
       # them too.
-      max_vel_x: 0.4
+      # First live-robot crawl limit. Raise only after a short clear-floor run
+      # has shown that localisation, obstacle sensing, and the stop path hold.
+      max_vel_x: 0.05
       min_vel_x: 0.0
       max_vel_y: 0.0
       min_vel_y: 0.0
-      max_vel_theta: 1.2
+      max_vel_theta: 0.20
       min_speed_xy: 0.0
-      max_speed_xy: 0.4
+      max_speed_xy: 0.05
       min_speed_theta: 0.0
-      acc_lim_x: 1.5
+      acc_lim_x: 0.15
       acc_lim_y: 0.0
-      acc_lim_theta: 2.5
+      acc_lim_theta: 0.30
       decel_lim_x: -1.5
       decel_lim_y: 0.0
       decel_lim_theta: -2.5
