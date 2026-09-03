@@ -30,8 +30,24 @@ deployment. Probing the subnet from the MiniPC's `enp3s0` finds two devices:
 
 ```text
 192.168.123.20    the Mid-360
-192.168.123.161   the Unitree board, with sshd listening
+192.168.123.161   the Unitree board's wired side
 ```
+
+The board answers on that wired address and on `192.168.68.70` over the site
+Wi-Fi - one machine, two interfaces. The cable is the more dependable of the
+two: on 2026-09-01 the Wi-Fi address accepted a deploy and then disappeared
+from the network minutes later, while the wired address kept accepting SSH.
+
+Log in as the `unitree` account; `sys20` is the MiniPC's user and does not
+exist on the board:
+
+```bash
+ssh unitree@192.168.123.161
+```
+
+The board does not answer ICMP on either address, so `ping` failing proves
+nothing about whether it is up. Check the SSH port instead, with
+`nc -zv -w4 192.168.123.161 22`.
 
 So the cable from the sensor does not run to a private point-to-point link with
 the MiniPC - it joins the robot's internal network, and the MiniPC joins the
@@ -40,11 +56,11 @@ through the board": physically it does. The driver process, however, has always
 run on the MiniPC, which is what `MID360_minipc.json` and the `192.168.123.18`
 host address record.
 
-The practical consequence is larger than the naming. **The board is reachable
-over this cable, so it can be deployed to and built on without any wireless
-link at all** - see `scripts/deploy_to_board.sh`. The board build has been the
-single blocker on the two-machine deployment, and it does not need the Wi-Fi
-question answered first.
+The practical consequence is larger than the naming. **The board can be
+deployed to and built on from the MiniPC today** - see
+`scripts/deploy_to_board.sh`, which has been run against
+the board. The board build has been the single blocker on the
+two-machine deployment, and nothing else has to be settled before it starts.
 
 The Unitree board's `eth0` also uses 192.168.123.18, so the MiniPC profile has to
 come down before the sensor is moved onto the board:

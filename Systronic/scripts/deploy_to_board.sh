@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Put this workspace on the Unitree board and build what has to be built there.
 #
-#     ./scripts/deploy_to_board.sh sys20@192.168.12.1              # sync + build
-#     ./scripts/deploy_to_board.sh sys20@192.168.12.1 --sync-only  # sync only
-#     ./scripts/deploy_to_board.sh sys20@192.168.12.1 --dry-run    # show, do nothing
+#     ./scripts/deploy_to_board.sh unitree@192.168.123.161              # sync + build
+#     ./scripts/deploy_to_board.sh unitree@192.168.123.161 --sync-only  # sync only
+#     ./scripts/deploy_to_board.sh unitree@192.168.123.161 --dry-run    # show, do nothing
 #
 # Deploying does not move the robot: it copies files and runs colcon. Nothing
 # here starts a node, and `enable_cmd_vel` stays false wherever it appears.
@@ -38,7 +38,7 @@ if [ -z "$TARGET" ]; then
     cat <<'USAGE'
 usage: deploy_to_board.sh <user@host> [--sync-only|--dry-run]
 
-  REMOTE_WS=~/other_ws ./scripts/deploy_to_board.sh sys20@192.168.12.1
+  REMOTE_WS=~/other_ws ./scripts/deploy_to_board.sh unitree@192.168.123.161
 USAGE
     exit 2
 fi

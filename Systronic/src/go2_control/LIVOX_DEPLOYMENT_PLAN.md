@@ -392,21 +392,55 @@ human reading the output - see `patches/fast_lio/README.md`.
 
 ## Part 2 - Board Bring-Up (board needed, robot does not walk)
 
-**The board is reachable over the sensor cable.** Probing 192.168.123.x from
-the MiniPC's `enp3s0` on 2026-08-25 found the Mid-360 at .20 and the Unitree
-board at .161 with sshd listening - that subnet is the Go2's own network, not a
-private LiDAR link. So Part 2 needs no wireless link and no site visit beyond
-having the robot on the bench:
+**The board is reachable, and the deploy has been run against it.** Log in as
+the `unitree` account - `sys20` is the MiniPC's user, not the board's - and use
+the Wi-Fi address:
+
+```text
+unitree@192.168.123.161   the board's wired side, on the Go2's own network
+unitree@192.168.68.70     the same board over site Wi-Fi
+```
+
+Both are the same machine on different interfaces, and which one answers
+changes with how the robot is currently connected. On 2026-09-01 the Wi-Fi
+address took a deploy and then dropped off the network some minutes later,
+while the wired address kept accepting SSH throughout. Try the cable first: it
+does not depend on an access point.
+
+**Do not use `ping` to decide whether the board is up.** It does not answer
+ICMP on either address, so a failed ping says nothing. Test the port instead:
 
 ```bash
-./scripts/deploy_to_board.sh sys20@192.168.123.161 --dry-run
-./scripts/deploy_to_board.sh sys20@192.168.123.161
+nc -zv -w4 192.168.123.161 22
+```
+
+Two subnets are in play and they are easy to confuse. `192.168.123.x` is the
+Go2's own internal wired network, where the Mid-360 sits at .20 and the MiniPC
+takes .18 on `enp3s0`. `192.168.68.x` is the site Wi-Fi, the same network as
+the MQTT broker at .62 that `main.py` already defaults to.
+
+The login is `unitree`. `sys20` is the MiniPC's user and does not exist on the
+board; the deploy script's usage line said otherwise until 2026-09-01.
+
+So Part 2 needs no site visit beyond having the robot powered on the bench:
+
+```bash
+./scripts/deploy_to_board.sh unitree@192.168.123.161 --dry-run
+./scripts/deploy_to_board.sh unitree@192.168.123.161
+```
+
+The script calls `ssh` and `rsync` several times, so it asks for the board's
+password once per call. Copy a key across first and the whole deploy runs
+unattended:
+
+```bash
+ssh-copy-id unitree@192.168.123.161
 ```
 
 This matters for sequencing. The board build has been the one blocker on the
-two-machine deployment, and it turns out not to depend on the Wi-Fi question at
-all. Do it over the cable, then bring the wireless link up afterwards knowing
-the software already works.
+two-machine deployment, and it does not depend on anything else being ready
+first. Build it now, and treat the remaining link and configuration questions
+as work done against software that is already known to compile on the board.
 
 ### 2.1 Build the driver
 
