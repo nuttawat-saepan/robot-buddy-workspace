@@ -781,27 +781,47 @@ TurtleBot3 ขนาดกับ footprint คนละเรื่องกั�
 ส่วน bag พิสูจน์ว่า localization แม่นแค่ไหน แต่พิสูจน์การเดินไม่ได้ ใช้ทั้งคู่
 
 ```bash
-ros2 launch go2_control sim.launch.py \
-  enable_unitree_bridge:=true \
-  enable_april:=false \
-  enable_stream:=false \
-  enable_init_pose:=false
+go2sim
+ros2 launch go2_control sim.launch.py
 ```
 
-อีกเทอร์มินัล ตรวจความพร้อม
+`go2sim` ตั้งค่าที่ต่างจากหน้างานให้หมดในคำเดียว — `base_footprint` แทน
+`base_link` และ `/cmd_vel` แทน `/cmd_vel_nav_preview` สองตัวนี้ถ้าตั้งผิด
+**ไม่มี error** แค่รายงานว่า controller ไม่ทำงานทั้งที่ทำงานอยู่
+
+### AMCL ต้องได้ initial pose แล้วต้องขยับ
+
+ตั้งตำแหน่งเริ่มต้น **ต้องใกล้ที่หุ่นอยู่จริง** TurtleBot3 ไม่ได้เกิดที่จุด
+กำเนิดของแมพในโลก house ถ้าตั้งที่ 0,0 กลุ่มจุดจะไม่มีวันหด ไม่ว่าจะขับนานแค่ไหน
 
 ```bash
-ros2 run go2_control local_check
+ros2 topic pub --once /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
+  "{header: {frame_id: map}, pose: {pose: {position: {x: -2.0, y: -0.5}, \
+    orientation: {w: 1.0}}}}"
 ```
 
-ควรได้ `Result: OK`
-
-ขับในซิมด้วยคีย์บอร์ด
+แล้วขับให้ขยับ — **หมุนช่วยได้มากกว่าเดินตรง**
 
 ```bash
-export TURTLEBOT3_MODEL=waffle
 ros2 run turtlebot3_teleop teleop_keyboard
 ```
+
+### ทดสอบ send_mission
+
+```bash
+go2ready
+go2goal 1.0 0.0 0.0
+go2record missions/sim.json
+go2mission missions/sim.json
+```
+
+alias พวกนี้อ่านค่าจาก `go2sim` เอง ไม่ต้องพิมพ์ `--controller-topic` ทุกครั้ง
+
+**นี่คือที่เดียวที่ทดสอบตรรกะของ send_mission ได้** — goal สำเร็จไหม เดินจบจุด
+ที่ 1 แล้วไปจุดที่ 2 ไหม หยุดที่ capture point ไหม Ctrl-C แล้วหยุดจริงไหม
+bag ทดสอบให้ไม่ได้เลยเพราะหุ่นใน bag ไม่ขยับ Nav2 จะ abort เสมอ
+
+รายละเอียดว่าต่างจากหน้างานตรงไหนบ้าง อยู่ใน `SIM_VS_FIELD.md`
 
 ---
 

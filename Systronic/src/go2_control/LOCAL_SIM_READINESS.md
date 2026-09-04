@@ -1,4 +1,8 @@
-> SUPERSEDED, kept for reference. Gazebo/TurtleBot3 era. Still runs, but the useful local test is now a bag replay - see RUNBOOK_ONSITE.md.
+> SUPERSEDED, kept for reference. Gazebo/TurtleBot3 era. The simulation does
+> still run, and is the only place the mission logic can be tested, but it
+> would not start at all until 2026-09-04 - see SIM_VS_FIELD.md for the fix,
+> for every value that differs from the site, and for what each kind of local
+> test can and cannot establish.
 > The sensor is a Livox Mid-360 and the robot is a Go2W; commands
 > and topic names below are for neither. See CLAUDE.md.
 
