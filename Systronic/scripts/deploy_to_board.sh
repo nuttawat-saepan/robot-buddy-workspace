@@ -95,12 +95,42 @@ echo "== building on the board"
 # with symlinks an edit to a node, a launch file or a YAML takes effect on the
 # next node restart with no rebuild at all. Without it every one-line change
 # costs a colcon run over ssh.
-ssh "$TARGET" "bash -lc '
+# --parallel-workers 2 is not tuning, it is a memory ceiling. Each compiler
+# process peaked at 2825 MB on the MiniPC and the board has four cores and
+# about 13 GB free, so letting colcon use all four risks the OOM killer taking
+# whichever process it likes - which on a board also running the leg
+# controller is not a compile failure you want to debug.
+if ssh "$TARGET" "bash -lc '
     set -e
     source /opt/ros/foxy/setup.bash
     cd $REMOTE_WS
-    colcon build --symlink-install --packages-select go2_interfaces go2_control
-'"
+    colcon build --symlink-install --parallel-workers 2 \
+        --packages-select go2_interfaces go2_control
+'"; then
+    echo "  build ok"
+else
+    # colcon prints a summary and buries the actual compiler error in a file on
+    # the board. Fetch it rather than making someone ssh in and go looking:
+    # a failed build over ssh otherwise shows a package name and nothing else.
+    echo
+    echo "== build FAILED - the errors, from the board's own build log"
+    ssh "$TARGET" "bash -lc '
+        cd $REMOTE_WS/log/latest_build 2>/dev/null || exit 0
+        for pkg in */; do
+            for f in \"\$pkg\"stderr.log \"\$pkg\"stdout_stderr.log; do
+                [ -s \"\$f\" ] || continue
+                echo
+                echo \"--- \$f\"
+                tail -40 \"\$f\"
+            done
+        done
+    '" || true
+    echo
+    echo "the whole build log stays on the board at $REMOTE_WS/log/latest_build/"
+    echo "bring it home with:"
+    echo "  rsync -az $TARGET:$REMOTE_WS/log/latest_build/ ./board_build_log/"
+    exit 1
+fi
 
 echo
 echo "== checking what the board is missing"

@@ -41,6 +41,13 @@ alias go2mission='ros2 run go2_control send_mission --controller-topic ${GO2_CON
 alias go2record='ros2 run go2_control record_waypoint --base-frame ${GO2_BASE_FRAME:-base_link} --file'
 
 # --- when it goes wrong ----------------------------------------------------
+# --- the board ---------------------------------------------------------------
+# ROBOT_IP comes from onsite.env when a setup script has been sourced; the
+# cabled address is the fallback because the Wi-Fi one has dropped mid-deploy.
+alias go2deploy='$_GO2_WS/scripts/deploy_to_board.sh unitree@${ROBOT_IP:-192.168.123.161}'
+# The board's build log, when a build failed and the terminal has moved on.
+alias go2boardlog='rsync -az unitree@${ROBOT_IP:-192.168.123.161}:${REMOTE_WS:-go2_ws}/log/latest_build/ ./board_build_log/ && echo "in ./board_build_log/ - the compiler errors are in */stderr.log"'
+
 alias go2logs='$_GO2_WS/scripts/collect_logs.sh'
 alias go2cpu='$_GO2_WS/scripts/measure_board_load.sh'
 alias go2build='(cd $_GO2_WS && source /opt/ros/foxy/setup.bash && colcon build --packages-select go2_control)'
