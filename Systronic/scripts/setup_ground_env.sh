@@ -24,6 +24,14 @@ export CYCLONEDDS_URI="<CycloneDDS><Domain><General><Interfaces>
     <NetworkInterface name=\"${GROUND_NET_IF:-wlp4s0}\" priority=\"default\" multicast=\"default\" />
 </Interfaces></General></Domain></CycloneDDS>"
 
+# Every node in this project launches with output='screen', which on Foxy means
+# the terminal and nowhere else: launch.log gets three lines about processes
+# starting and not one line of what they said. FAST-LIO's "lidar loop back,
+# clear buffer" - the warning that it is about to diverge - has never been on
+# disk once. This overrides output= for every action without touching the
+# launch files, and it is what makes collect_logs.sh worth running.
+export OVERRIDE_LAUNCH_PROCESS_OUTPUT=both
+
 echo "ground station environment ready"
 echo "  RMW              $RMW_IMPLEMENTATION"
 echo "  ROS_DOMAIN_ID    ${ROS_DOMAIN_ID:-0}"

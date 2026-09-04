@@ -37,6 +37,14 @@ export GO2_CONTROLLER_TOPIC=/cmd_vel
 # TurtleBot3 uses base_footprint where the Go2 stack uses base_link.
 export GO2_BASE_FRAME=base_footprint
 
+# Every node in this project launches with output='screen', which on Foxy means
+# the terminal and nowhere else: launch.log gets three lines about processes
+# starting and not one line of what they said. FAST-LIO's "lidar loop back,
+# clear buffer" - the warning that it is about to diverge - has never been on
+# disk once. This overrides output= for every action without touching the
+# launch files, and it is what makes collect_logs.sh worth running.
+export OVERRIDE_LAUNCH_PROCESS_OUTPUT=both
+
 echo "simulation environment ready - TurtleBot3 in Gazebo, not the Go2W"
 echo "  TURTLEBOT3_MODEL   $TURTLEBOT3_MODEL"
 echo "  RMW                $RMW_IMPLEMENTATION"
