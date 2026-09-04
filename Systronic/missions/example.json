@@ -1,0 +1,8 @@
+{
+  "frame_id": "map",
+  "waypoints": [
+    {"name": "door",   "x": 1.0, "y": 0.0,  "yaw": 0.0},
+    {"name": "corner", "x": 3.2, "y": -1.5, "yaw": 1.57, "capture": true},
+    {"name": "home",   "x": 0.0, "y": 0.0,  "yaw": 0.0}
+  ]
+}
