@@ -34,7 +34,9 @@ the two modes to use, instead of finding out by watching a robot not move.
 
 import argparse
 import json
+import os
 import socket
+import sys
 import time
 
 REQUIRED_ROBOT_ACK = 'I_UNDERSTAND_THIS_CAN_MOVE_THE_REAL_ROBOT'
@@ -78,6 +80,13 @@ def parse_args():
     parser.add_argument('--gait', type=int, default=-1,
                         help='api mode only. Gait to select on startup, or -1 '
                              'to leave the gait alone.')
+    parser.add_argument('--transcript', default='auto',
+                        help="Where to copy everything this prints. 'auto' "
+                             'writes ~/go2_logs/bridge_<stamp>.log, a path '
+                             "writes there, 'none' disables it. This process "
+                             'is the one unknown of a field trip and it logs '
+                             'to the terminal only, so the transcript is on '
+                             'by default.')
     return parser.parse_args()
 
 
@@ -282,8 +291,74 @@ def run_api(args):
         rclpy.shutdown()
 
 
+class _Tee:
+    """Write to the terminal and to a file at once.
+
+    Everything this program reports - which path answered, how many
+    subscribers the request topic has, why it refused to arm - goes through
+    print(), and print() goes to a terminal that gets closed at the end of the
+    day. Two field sessions could not be diagnosed afterwards for exactly that
+    reason, so the transcript is written whether anyone remembered to ask for
+    it or not.
+    """
+
+    def __init__(self, stream, handle):
+        self._stream = stream
+        self._handle = handle
+
+    def write(self, text):
+        self._stream.write(text)
+        self._handle.write(text)
+        self._handle.flush()
+
+    def flush(self):
+        self._stream.flush()
+        self._handle.flush()
+
+    def isatty(self):
+        return self._stream.isatty()
+
+
+def start_transcript(args):
+    """Return the open transcript file, or None. Never fatal."""
+    if args.transcript == 'none':
+        return None
+    if args.transcript == 'auto':
+        directory = os.path.join(os.path.expanduser('~'), 'go2_logs')
+        stamp = time.strftime('%Y%m%d_%H%M%S')
+        path = os.path.join(directory, 'bridge_%s_%s.log' % (args.mode, stamp))
+    else:
+        path = os.path.expanduser(args.transcript)
+        directory = os.path.dirname(path) or '.'
+    try:
+        os.makedirs(directory, exist_ok=True)
+        handle = open(path, 'a', buffering=1)
+    except OSError as exc:
+        # A missing transcript is not a reason to refuse to talk to the robot.
+        print('warning: no transcript (%s)' % exc)
+        return None
+    handle.write('\n==== %s  mode=%s  interface=%s  topic=%s\n'
+                 % (time.strftime('%Y-%m-%d %H:%M:%S'), args.mode,
+                    args.interface, args.request_topic))
+    sys.stdout = _Tee(sys.stdout, handle)
+    sys.stderr = _Tee(sys.stderr, handle)
+    print('transcript  %s' % path)
+    return handle
+
+
 def main():
     args = parse_args()
+    transcript = start_transcript(args)
+    try:
+        run(args)
+    finally:
+        if transcript is not None:
+            sys.stdout = sys.__stdout__
+            sys.stderr = sys.__stderr__
+            transcript.close()
+
+
+def run(args):
     if args.mode == 'probe':
         run_probe(args)
         return

@@ -66,6 +66,11 @@ say "environment, including per-process domain and RMW"
     echo "== top by cpu =="
     ps -eo pid,etimes,pcpu,pmem,comm --sort=-pcpu | head -25
     echo
+    echo "== network interfaces =="
+    echo "UNITREE_IF and ROBOT_NET_IF have to name one of these. Naming a card"
+    echo "that does not exist here is silent in some places and fatal in others."
+    ip -brief addr 2>/dev/null || ip addr 2>/dev/null
+    echo
     echo "== shared memory segments =="
     echo "a large count here with no ROS running means stale Fast DDS segments;"
     echo "they can only be cleared once every ROS process is stopped."
@@ -111,6 +116,44 @@ else
     echo "ros2 not on PATH - source the workspace before running this" \
         > "$DEST/10_nodes.txt"
     say "ros2 not found, skipping graph capture"
+fi
+
+# ----------------------------------------------------- the Unitree side
+# The rest of this script sees whatever graph the current shell is pointed at.
+# The robot's own traffic is not in it: Unitree publishes on ROS_DOMAIN_ID 0
+# over CycloneDDS, while the navigation stack is on the site domain over Fast
+# DDS. Collecting only one of the two is how a trip ends with no record of the
+# single question it went out to answer - what the robot actually publishes.
+if command -v ros2 > /dev/null 2>&1; then
+    UNITREE_XML="$WS/src/go2_control/config/cyclonedds_unitree_wlan.xml"
+    {
+        echo "queried with ROS_DOMAIN_ID=0, rmw_cyclonedds_cpp"
+        echo "config: $UNITREE_XML"
+        echo
+        echo "== everything on domain 0 =="
+        env -u ROS_LOCALHOST_ONLY -u FASTRTPS_DEFAULT_PROFILES_FILE \
+            ROS_DOMAIN_ID=0 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
+            CYCLONEDDS_URI="file://$UNITREE_XML" \
+            timeout 20 ros2 topic list 2>&1
+        echo
+        echo "== the request topic, if it is there under any name =="
+        env -u ROS_LOCALHOST_ONLY -u FASTRTPS_DEFAULT_PROFILES_FILE \
+            ROS_DOMAIN_ID=0 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
+            CYCLONEDDS_URI="file://$UNITREE_XML" \
+            timeout 20 ros2 topic list 2>/dev/null \
+            | grep -E 'api|sport|lf/|wirelesscontroller' || echo '(nothing matched)'
+    } > "$DEST/17_unitree_domain0.txt" 2>&1
+    say "the Unitree graph on domain 0 - the answer to 'what is the topic called'"
+fi
+
+# --------------------------------------------------- the bridge transcripts
+# unitree_udp_bridge prints to the terminal and writes its own transcript;
+# nothing of it reaches ~/.ros/log, because it does not use the ROS logger.
+if compgen -G "$HOME/go2_logs/bridge_*.log" > /dev/null 2>&1; then
+    mkdir -p "$DEST/bridge"
+    find "$HOME/go2_logs" -maxdepth 1 -name 'bridge_*.log' -mmin -480 \
+        -exec cp {} "$DEST/bridge/" \; 2>/dev/null
+    say "unitree_udp_bridge transcripts from the last eight hours"
 fi
 
 # ----------------------------------------------------------- the log files
