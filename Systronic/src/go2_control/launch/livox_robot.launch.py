@@ -262,7 +262,15 @@ def generate_launch_description():
             description='Start cmd_vel_node, the only node that can move the '
                         'robot. It still refuses to run without robot_ack.'),
         DeclareLaunchArgument('robot_ack', default_value=''),
-        DeclareLaunchArgument('unitree_interface', default_value='eth0'),
+        # Correct value depends on which machine this runs on: eth0 is the
+        # robot's own wired network as seen from the board, while the MiniPC
+        # reaches the robot over its wireless card. Defaulting to UNITREE_IF
+        # means scripts/onsite.env sets it in one place; passing the argument
+        # explicitly still wins. Sending on the wrong interface arms with no
+        # error and delivers nothing.
+        DeclareLaunchArgument(
+            'unitree_interface',
+            default_value=os.environ.get('UNITREE_IF', 'eth0')),
         DeclareLaunchArgument('enable_unitree_read', default_value='false'),
         DeclareLaunchArgument(
             'enable_camera_tf', default_value='false',

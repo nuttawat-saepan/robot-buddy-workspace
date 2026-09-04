@@ -85,16 +85,29 @@ def open_socket(port):
     return sock
 
 
-def read_command(sock, args):
-    """Return (x, y, z) from one packet, or None if nothing arrived."""
+def read_command(sock, args, stats):
+    """Return (x, y, z) from one packet, or None if there was nothing usable.
+
+    A malformed packet is dropped, not raised. Anything on the machine can
+    send to a UDP port, and one stray datagram must not be able to kill the
+    process that is currently driving a robot. Dropped packets are counted so
+    a relay sending nonsense is still visible rather than silently ignored.
+    """
     try:
         packet, _ = sock.recvfrom(256)
     except socket.timeout:
         return None
-    command = json.loads(packet.decode('ascii'))
-    return (clamp(command['x'], args.max_linear),
-            clamp(command['y'], args.max_linear),
-            clamp(command['z'], args.max_angular))
+    try:
+        command = json.loads(packet.decode('ascii'))
+        return (clamp(command['x'], args.max_linear),
+                clamp(command['y'], args.max_linear),
+                clamp(command['z'], args.max_angular))
+    except (ValueError, KeyError, TypeError, UnicodeDecodeError) as exc:
+        stats['dropped'] += 1
+        if stats['dropped'] in (1, 10, 100) or stats['dropped'] % 1000 == 0:
+            print(f'dropped {stats["dropped"]} malformed packet(s), latest: {exc}',
+                  flush=True)
+        return None
 
 
 # --------------------------------------------------------------------- probe
@@ -175,11 +188,12 @@ def run_sdk(args):
     print(f'armed: sdk mode, sport API {version}, udp port {args.port}', flush=True)
 
     sock = open_socket(args.port)
+    stats = {'dropped': 0}
     last_rx = 0.0
     stopped = True
     try:
         while True:
-            command = read_command(sock, args)
+            command = read_command(sock, args, stats)
             if command is not None:
                 client.Move(*command)
                 last_rx = time.monotonic()
@@ -225,12 +239,13 @@ def run_api(args):
         print(f'  {peers} subscriber(s) on the request topic', flush=True)
 
     sock = open_socket(args.port)
+    stats = {'dropped': 0}
     last_rx = 0.0
     stopped = True
     sent = 0
     try:
         while True:
-            command = read_command(sock, args)
+            command = read_command(sock, args, stats)
             if command is not None:
                 # The wheeled base drops back into joystick control unless it is
                 # told otherwise periodically, which is why go2w_cmd_vel_control

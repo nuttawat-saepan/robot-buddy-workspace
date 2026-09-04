@@ -6,6 +6,7 @@ from std_msgs.msg import String
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 import json
+import os
 
 REQUIRED_ROBOT_ACK = 'I_UNDERSTAND_THIS_CAN_MOVE_THE_REAL_ROBOT'
 
@@ -32,10 +33,25 @@ class CmdVelBridge(Node):
         from unitree_sdk2py.go2.sport.sport_client import SportClient
 
         # ===== INIT UNITREE =====
+        # Which interface the SDK talks to the robot over. There is no default
+        # that is right everywhere: on the Unitree board it is the robot's own
+        # wired network, on the MiniPC it is whichever card reaches the robot
+        # (measured as wlp4s0 on 2026-09-03). Hardcoding either one is how a
+        # run ends up arming successfully while no command reaches the legs,
+        # with nothing logged to say so.
+        #
+        # Precedence, most specific first:
+        #   the network_interface launch/CLI parameter
+        #   the UNITREE_IF environment variable, set by scripts/onsite.env
+        #   eth0, which is correct when this runs on the board
         self.network_interface = self.declare_parameter(
             'network_interface',
-            'eth0',
+            # os.environ.get('UNITREE_IF', 'eth0'),
+            os.environ.get('UNITREE_IF', 'enp5s0'),
         ).value
+        self.get_logger().info(
+            f'Unitree SDK interface: {self.network_interface} '
+            f'(UNITREE_IF={os.environ.get("UNITREE_IF", "<unset>")})')
         ChannelFactoryInitialize(0, self.network_interface)
 
         self.client = SportClient()
@@ -43,9 +59,22 @@ class CmdVelBridge(Node):
         self.client.Init()
 
         # ===== LIMIT =====
-        self.max_vx = 1.0
-        self.max_vy = 1.0  
-        self.max_vyaw = 1.0
+        # This is the last clamp before the robot's own controller, so it is
+        # the one that has to hold when something other than Nav2 publishes to
+        # /cmd_vel - a teleop left running, a hand test, a stale node. It used
+        # to be 1.0 m/s, twenty times what nav2_livox_go2.yaml allows, which
+        # meant the crawl limit was enforced only by Nav2's configuration and
+        # by nothing at all downstream of it.
+        #
+        # Defaults match nav2_livox_go2.yaml. Raise both together, and only
+        # after a run has shown that localisation, obstacle sensing and the
+        # stop path hold at the current speed.
+        self.max_vx = float(self.declare_parameter('max_vx', 0.05).value)
+        self.max_vy = float(self.declare_parameter('max_vy', 0.05).value)
+        self.max_vyaw = float(self.declare_parameter('max_vyaw', 0.20).value)
+        self.get_logger().info(
+            f'velocity clamp: vx +/-{self.max_vx} m/s, vy +/-{self.max_vy} m/s, '
+            f'wz +/-{self.max_vyaw} rad/s')
 
         self.target_vx = 0.0
         self.target_vy = 0.0
