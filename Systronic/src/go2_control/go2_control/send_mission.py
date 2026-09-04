@@ -53,6 +53,7 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
+from std_msgs.msg import String
 
 from go2_control.nav_ready_check import NavReadyCheck
 
@@ -73,6 +74,12 @@ def parse_args(argv):
                              'place; skip them only when you know why.')
     parser.add_argument('--ready-timeout', type=float, default=20.0,
                         help='Seconds to wait for the readiness checks to pass.')
+    parser.add_argument('--no-capture', action='store_true',
+                        help='Hold at capture points without photographing. '
+                             'For proving the route before the camera is '
+                             'trusted, or when mission_capture is not running.')
+    parser.add_argument('--capture-timeout', type=float, default=15.0,
+                        help='Seconds to wait for mission_capture to answer.')
     parser.add_argument('--capture-pause', type=float, default=3.0,
                         help='Seconds to hold at a waypoint marked capture.')
     parser.add_argument('--frame', default='map')
@@ -149,14 +156,67 @@ def wait_ready(check, timeout):
 
 class MissionRunner:
 
-    def __init__(self, node, frame, capture_pause):
+    def __init__(self, node, frame, capture_pause, capture_timeout=15.0,
+                 mission_name=''):
         self.node = node
         self.frame = frame
         self.capture_pause = capture_pause
+        self.capture_timeout = capture_timeout
+        self.mission_name = mission_name
         self.client = ActionClient(node, NavigateToPose, 'navigate_to_pose')
         self.goal_handle = None
         self.result = None
         self.last_print = 0.0
+        self.capture_reply = None
+        self.capture_pub = node.create_publisher(
+            String, '/mission/capture_request', 10)
+        node.create_subscription(
+            String, '/mission/capture_done', self._on_capture_done, 10)
+
+    def _on_capture_done(self, msg):
+        try:
+            self.capture_reply = json.loads(msg.data)
+        except ValueError:
+            self.capture_reply = {'ok': False, 'error': 'unreadable reply'}
+
+    def capture(self, wp):
+        """Ask for a photograph and wait for the answer.
+
+        A capture point used to be a three second sleep, which meant the robot
+        stopped in the right place and came home with nothing. Waiting for the
+        reply rather than firing and forgetting is what makes the mission
+        report true: without it a mission says it photographed eight points
+        whether or not a single file was written.
+
+        A failed capture does not stop the mission. Walking the rest of the
+        route and coming back with seven photographs beats standing in a
+        corridor because the eighth failed - but it is reported, loudly, and
+        the caller decides.
+        """
+        self.capture_reply = None
+        request = String()
+        request.data = json.dumps(
+            {'label': wp['name'], 'mission': self.mission_name})
+        self.capture_pub.publish(request)
+
+        deadline = time.monotonic() + self.capture_timeout
+        while rclpy.ok() and time.monotonic() < deadline:
+            if self.capture_reply is not None:
+                break
+            rclpy.spin_once(self.node, timeout_sec=0.1)
+
+        if self.capture_reply is None:
+            print(f'    CAPTURE FAILED  no reply in {self.capture_timeout:.0f}s'
+                  ' - is mission_capture running?')
+            return False
+        if not self.capture_reply.get('ok'):
+            print('    CAPTURE FAILED  '
+                  + str(self.capture_reply.get('error', 'no reason given')))
+            return False
+        print('    photographed -> ' + str(self.capture_reply.get('path')))
+        if self.capture_reply.get('warning'):
+            print('    warning: ' + str(self.capture_reply['warning']))
+        return True
 
     def feedback(self, msg):
         # One line a second, not one per feedback message: the point is to see
@@ -226,7 +286,14 @@ def main(argv=None):
     check = NavReadyCheck(node_name='send_mission_ready', periodic=False,
                           overrides={'controller_cmd_topic': args.controller_topic})
     node = rclpy.create_node('send_mission')
-    runner = MissionRunner(node, frame, args.capture_pause)
+    # Photographs from one run belong in one folder, named after the
+    # mission file. A single --goal has no mission, so they land loose.
+    mission_name = (os.path.splitext(os.path.basename(args.file))[0]
+                    if args.file else '')
+    captures_failed = []
+    runner = MissionRunner(
+        node, frame, args.capture_pause, args.capture_timeout,
+        mission_name)
 
     try:
         if args.skip_ready_check:
@@ -249,11 +316,22 @@ def main(argv=None):
                 print('stopping the mission here')
                 break
             if wp.get('capture'):
-                print(f'    capture point: holding {args.capture_pause:.0f}s')
-                print('    (the camera and upload path are not wired up yet)')
+                # Hold still before the shutter. Nav2 reports success the
+                # moment the goal tolerance is met, while the robot is still
+                # settling, and a photograph taken then is smeared.
+                print(f'    capture point: settling {args.capture_pause:.0f}s')
                 time.sleep(args.capture_pause)
+                if args.no_capture:
+                    print('    --no-capture: not photographing')
+                elif not runner.capture(wp):
+                    captures_failed.append(wp['name'])
         else:
-            print('\nmission complete')
+            if captures_failed:
+                print('\nmission complete, but %d capture point(s) came back '
+                      'with nothing: %s'
+                      % (len(captures_failed), ', '.join(captures_failed)))
+            else:
+                print('\nmission complete')
     except KeyboardInterrupt:
         runner.cancel()
     finally:

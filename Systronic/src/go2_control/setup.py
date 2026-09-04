@@ -126,6 +126,7 @@ setup(
         'cmd_vel_udp_relay = go2_control.cmd_vel_udp_relay:main',
         'nav_ready_check = go2_control.nav_ready_check:main',
         'send_mission = go2_control.send_mission:main',
+        'mission_capture = go2_control.mission_capture:main',
         'record_waypoint = go2_control.record_waypoint:main',
         'unitree_udp_bridge = go2_control.unitree_udp_bridge:main',
         'go2w_read = go2_control.go2w_read:main',
