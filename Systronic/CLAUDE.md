@@ -220,3 +220,10 @@ every hardcoded one of those has already caused a failure here.
 
 Two runs minimum before believing a measurement. Several results in this
 project reversed between the first and second run of the same condition.
+
+## Keep AGENTS.md In Step
+
+The repository root carries `AGENTS.md`, which is this file with paths rewritten
+for that directory. Codex and other agents read it instead of this one. Change
+both together - the previous pair drifted for two weeks and both were still
+describing a sensor that had been replaced.
