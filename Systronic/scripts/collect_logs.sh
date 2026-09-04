@@ -159,11 +159,19 @@ fi
 # ----------------------------------------------------------- the log files
 # ~/.ros/log grows without limit, so take only what is recent enough to be
 # about this session.
+#
+# The two shapes have to be collected separately. `ros2 launch` makes a dated
+# directory holding launch.log; `ros2 run` writes a flat <node>_<pid>_<ms>.log
+# beside those directories instead. Taking only the directories quietly dropped
+# every node started by hand - which on this project means cmd_vel_udp_relay,
+# nav_ready_check, send_mission and record_waypoint, the whole of step 10.
 if [ -d "$HOME/.ros/log" ]; then
     mkdir -p "$DEST/ros_log"
     find "$HOME/.ros/log" -maxdepth 1 -mmin -240 -type d -print0 2>/dev/null \
         | xargs -0 -I{} cp -r {} "$DEST/ros_log/" 2>/dev/null
-    say "~/.ros/log from the last four hours"
+    find "$HOME/.ros/log" -maxdepth 1 -mmin -240 -type f -name '*.log' -print0 2>/dev/null \
+        | xargs -0 -r -I{} cp {} "$DEST/ros_log/" 2>/dev/null
+    say "~/.ros/log from the last four hours - $(ls "$DEST/ros_log" 2>/dev/null | wc -l) entries"
 fi
 
 # ---------------------------------------------------------- the config used
