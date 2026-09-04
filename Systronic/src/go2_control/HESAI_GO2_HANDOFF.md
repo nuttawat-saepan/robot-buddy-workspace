@@ -1,3 +1,7 @@
+> SUPERSEDED, kept for reference. Hesai XT16 era. Superseded by LIVOX_DEPLOYMENT_PLAN.md.
+> The sensor is a Livox Mid-360 and the robot is a Go2W; commands
+> and topic names below are for neither. See CLAUDE.md.
+
 # Hesai XT16 + Go2 Handoff
 
 Use this note to resume field integration work safely.

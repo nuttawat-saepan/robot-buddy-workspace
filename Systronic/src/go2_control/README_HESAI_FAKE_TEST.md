@@ -1,3 +1,7 @@
+> SUPERSEDED, kept for reference. Hesai XT16 era. The Livox equivalent is the replay appendix in RUNBOOK_ONSITE.md.
+> The sensor is a Livox Mid-360 and the robot is a Go2W; commands
+> and topic names below are for neither. See CLAUDE.md.
+
 # Hesai XT16 Fake LiDAR Test
 
 This workflow tests the LiDAR-to-costmap path locally without a real Hesai

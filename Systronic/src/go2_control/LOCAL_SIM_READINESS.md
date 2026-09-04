@@ -1,3 +1,7 @@
+> SUPERSEDED, kept for reference. Gazebo/TurtleBot3 era. Still runs, but the useful local test is now a bag replay - see RUNBOOK_ONSITE.md.
+> The sensor is a Livox Mid-360 and the robot is a Go2W; commands
+> and topic names below are for neither. See CLAUDE.md.
+
 # Local Sim Readiness
 
 This runbook checks the ROS2 Foxy Go2/Go2W workspace locally with no real

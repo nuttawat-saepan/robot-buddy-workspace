@@ -1,3 +1,7 @@
+> SUPERSEDED, kept for reference. Hesai XT16 era. Superseded by RUNBOOK_ONSITE.md.
+> The sensor is a Livox Mid-360 and the robot is a Go2W; commands
+> and topic names below are for neither. See CLAUDE.md.
+
 # Real Robot Field Checklist
 
 Use this checklist only when a real Unitree Go2/Go2W is present and the field
