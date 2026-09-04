@@ -1,201 +1,233 @@
-# Local ROS2 Foxy Preparation Rules
+# Agent Rules For This Workspace
 
+The same context Claude Code reads from `Systronic/CLAUDE.md`, kept here so
+Codex and anything else that looks for `AGENTS.md` at the repository root gets
+it too. **If you change one, change the other** - they drift silently otherwise,
+and the previous pair had been describing a Hesai XT16 sensor that was replaced
+on 2026-08-25.
 
+Paths below are written from this directory, the git root. Most work happens in
+`Systronic/`, and the build and source commands assume you are there.
 
-This workspace is being prepared locally without a real Unitree robot connected.
 
+ROS 2 Foxy workspace for a Unitree **Go2W** carrying a **Livox Mid-360**, with
+the goal of a robot that takes a mission from a web interface, walks it,
+photographs designated points, and sends the photographs back.
 
-
-## Safety
-
-
-
-- Do not publish to `/cmd_vel`.
-
-- Do not run `cmd_vel_node`.
-
-- Do not launch with `enable_cmd_vel:=true`.
-
-- Do not run real robot movement commands.
-
-- Use real launch only for syntax/dependency checks with:
-
-  `enable_cmd_vel:=false enable_camera:=false enable_april:=false`
-
-- Real movement is gated. Do not start movement-capable paths unless the user
-  explicitly approves field movement and provides:
-
-  `robot_ack:=I_UNDERSTAND_THIS_CAN_MOVE_THE_REAL_ROBOT`
-
-- `cmd_vel_node` must refuse to initialize Unitree SDK without the exact
-  `robot_ack` above.
-
-- `main.py` and `april_localizer.py` must keep `/cmd_vel` publishing disabled by
-  default. AprilTag scan/rotate mode is movement-capable and must stay disabled
-  unless the same movement gate is armed.
-
-
-
-## Scope
-
-
-
-Focus on:
-
-- workspace structure
-
-- ROS2 Foxy environment
-
-- dependency checks
-
-- `colcon build`
-
-- package executable checks
-
-- launch syntax checks
-
-- simulation/fake testing if available
-
-- identifying hardcoded config before field testing
-
-
-
-## Simulation Notes
-
-
-
-- `sim.launch.py` is intended for local software checks with no real robot connected.
-
-- `go2.launch.py` is the front-door launcher. Its default mode is `sim` for
-  local safety. Use `mode:=sim` for simulation and `mode:=real` only with
-  explicit real map/params and the movement gate rules above.
-
-- Keep local simulation launches safe by default:
-
-  `enable_unitree_bridge:=false enable_april:=false enable_stream:=false enable_init_pose:=false`
-
-- When testing the Unitree fake bridge in simulation, use:
-
-  `enable_unitree_bridge:=true enable_april:=false enable_stream:=false enable_init_pose:=false`
-
-- TurtleBot3/Gazebo publishes the source topics as `/joint_states`, `/odom`, and `/imu`.
-
-- The local sim default map is `src/go2_control/map/house_map.yaml` with
-  `house_map.pgm`, restored from the old workspace. Keep these installed via
-  `setup.py` under `share/go2_control/map`.
-
-- `gazebo_convert` internally expects `/sim_joint_states`, `/sim_odom`, and `/sim_imu`, so `sim.launch.py` must remap:
-
-  - `/sim_joint_states` -> `/joint_states`
-
-  - `/sim_odom` -> `/odom`
-
-  - `/sim_imu` -> `/imu`
-
-- If `/lf/lowstate` exists but `ros2 topic hz /lf/lowstate` reports no data, first check that `/joint_states`, `/odom`, and `/imu` are publishing and that the remaps above are present.
-
-- TurtleBot3/Gazebo publishes lidar as LaserScan on `/scan`, not PointCloud2. The Go2 pipeline expects PointCloud2 on `/utlidar/cloud`, and `go2w_read` republishes that as `/pointcloud`.
-
-- `scan_to_pointcloud` exists for local simulation only. With `enable_unitree_bridge:=true`, `sim.launch.py` starts:
-
-  `/scan` -> `scan_to_pointcloud` -> `/utlidar/cloud` -> `go2w_read` -> `/pointcloud`
-
-- Keep `enable_pc2scan:=false` for the normal TurtleBot3 simulation path. Turning it on converts `/utlidar/cloud` back to `/scan`, which is useful for real/fake PointCloud tests but can create a confusing scan/cloud loop in this sim setup.
-
-- For fake Unitree bridge validation, check these rates after launching sim:
-
-  - `ros2 topic hz /lf/lowstate`
-
-  - `ros2 topic hz /lf/sportmodestate`
-
-  - `ros2 topic hz /utlidar/cloud`
-
-  - `ros2 topic hz /pointcloud`
-
-  - `ros2 topic hz /odom`
-
-  - `ros2 topic hz /imu/data`
-
-- `go2_control local_check` is the preferred read-only smoke test once sim is running. It must be run after `sim.launch.py`/`go2.launch.py mode:=sim` is already running in another terminal; it does not launch simulation by itself. Run it after sourcing the workspace:
-
-  `ros2 run go2_control local_check`
-
-- The workspace also has a helper script:
-
-  `/home/sys20/projects/systonic-2307/Systronic/scripts/local_sim_check.sh`
-
-  It sources ROS Foxy and the workspace, then runs `go2_control local_check`.
-
-- `local_check` only subscribes/inspects graph state. It must not publish `/cmd_vel` or send robot commands. It checks core nodes, required simulated topics, `/map` with transient-local QoS, and warns if non-Gazebo `/cmd_vel` publishers are present.
-
-- If a sandboxed tool run fails with `getifaddrs: Operation not permitted`, that is a ROS DDS discovery permission issue in the tool sandbox. Ask the user to run the checker in their terminal, or rerun with approved network-interface access.
-
-- Do not press RViz `Nav2 Goal` during safety-only checks; Nav2 goals can publish `/cmd_vel` in simulation.
-
-- For sim movement tests, RViz `2D Goal Pose` requires Nav2 lifecycle nodes to
-  be active and `/navigate_to_pose` to appear in `ros2 action list`. If nothing
-  happens, check `bt_navigator`; on Foxy, newer BT plugin names in
-  `nav2_params.yaml` can leave it unconfigured.
-
-- Real robot field checks are documented in:
-
-  `/home/sys20/projects/systonic-2307/Systronic/src/go2_control/REAL_ROBOT_FIELD_CHECKLIST.md`
-
-- Hesai XT16 field handoff/checklist files are:
-
-  `/home/sys20/projects/systonic-2307/Systronic/src/go2_control/FIELD_RUNBOOK_QUICK.md`
-
-  `/home/sys20/projects/systonic-2307/Systronic/src/go2_control/HESAI_GO2_HANDOFF.md`
-
-  `/home/sys20/projects/systonic-2307/Systronic/src/go2_control/HESAI_GO2_FIELD_CHECKLIST.md`
-
-- The local Hesai driver workspace is `~/hesai_ws`, built from the official
-  `https://github.com/HesaiTechnology/HesaiLidar_ROS_2.0.git` repo at tag
-  `v2.0.12`. Do not switch to `leggedrobotics/hesai_lidar_ros_driver` during
-  first field bringup unless the official driver is confirmed blocked.
-
-- Hesai field config should start from
-  `src/go2_control/config/hesai_xt16_field.example.yaml`, then be copied to a
-  site-specific `hesai_xt16_field.yaml` with the real LiDAR IP/network values.
-
-- Fake Hesai mapping rehearsal uses
-  `ros2 launch go2_control hesai_fake_mapping.launch.py`. It starts
-  TurtleBot3/Gazebo, `scan_to_pointcloud`, `pointcloud_to_laserscan`,
-  `slam_toolbox`, and RViz. The mapping path is:
-  `/scan -> /lidar_points -> /hesai_scan -> /map`, so Gazebo geometry still
-  matches the generated map while the pointcloud conversion path is exercised.
-  It does not start `cmd_vel_node` or publish `/cmd_vel` by itself. Any movement
-  for mapping must be simulation-only.
-
-- Gazebo 3D LiDAR mapping uses
-  `ros2 launch go2_control hesai_3d_mapping.launch.py`. It spawns a local
-  TurtleBot3 waffle SDF with a 16-layer ray sensor publishing PointCloud2 on
-  `/lidar_points`, then converts to `/hesai_scan` for `slam_toolbox`. This is
-  closer to Pandar-style data than the `/scan -> PointCloud2` rehearsal, but it
-  is still simulation-only and not a real Pandar validation.
-
-- Current 3D mapping projection tuning in `pc2scan_hesai.yaml` is
-  `target_frame: base_scan`, `min_height: -0.06`, `max_height: 0.06`, and
-  `range_min: 0.7`. This is a simulation self-filter/debug setting after seeing
-  dark robot-body rings in `/map`; it may need more tuning before maps look like
-  clean rooms.
-
-
-
-Keep edits scoped to:
-
-- `src/go2_control`
-
-- `src/go2_interfaces`
-
-
-
-Ask before:
-
-- installing dependencies
-
-- deleting files
-
-- changing launch behavior
-
-- changing network or robot movement behavior
+The Hesai/Pandar XT16 work that this repository started from is superseded. The
+files are kept, and marked at the top of each, but the Livox path is the live
+one and the Hesai one is not maintained.
+
+## Safety Rules
+
+There may be no real robot connected during local work.
+
+Do not publish to `/cmd_vel` during local checks or no-motion field checks.
+Do not run `cmd_vel_node` unless field movement is explicitly approved.
+Movement requires the operator's gate, on the command line, for one run:
+
+```text
+I_UNDERSTAND_THIS_CAN_MOVE_THE_REAL_ROBOT
+```
+
+The standing proof that a run cannot move the robot:
+
+```bash
+ros2 topic info /cmd_vel        # expect: Unknown topic '/cmd_vel'
+ros2 node list | grep cmd_vel   # expect: nothing
+```
+
+Movement is the final stage only, after sensor, TF, map and localisation checks
+pass, with the area clear and the remote in someone's hand.
+
+## The Robot Is A Go2W, Not A Go2
+
+Its service list carries `wheeled_sport`, not the `sport` service that
+unitree_sdk2py's `SportClient` looks for. The SDK's discovery finds nothing and
+refuses to send, surfacing as error 3102 with no hint that the name is the
+problem. `unitree_udp_bridge --mode api` publishes `unitree_api/msg/Request`
+directly and does not depend on that discovery; it is the default for this
+reason. Run `--mode probe` at every site before anything else.
+
+## Workspace
+
+```text
+Main workspace: /home/sys20/projects/systonic-2307/Systronic
+Livox driver:   ~/ws_livox
+FAST-LIO:       ~/ws_fastlio_livox
+Bags:           ~/livox_bags_field        (outside git, 2.5 GB)
+ROS distro:     Foxy
+```
+
+Read first:
+
+```text
+Systronic/src/go2_control/ONSITE_PLAN.md                 what to do on site, in what order, why
+Systronic/src/go2_control/RUNBOOK_ONSITE.md              the commands for each of those steps
+Systronic/src/go2_control/LIVOX_DEPLOYMENT_PLAN.md       how the deployment is meant to work
+Systronic/src/go2_control/LIVOX_AMCL_TUNING_2026-09-03.md what actually moves the error
+Systronic/src/go2_control/LIVOX_MID360_MIGRATION.md      how the Livox path fits together
+Systronic/src/go2_control/SIM_VS_FIELD.md                what the sim can and cannot tell you
+```
+
+## Five Environments, And They Are Not Interchangeable
+
+Sourcing the wrong one is not an error. `ros2 topic list` comes back empty, or
+a topic has a publisher and delivers nothing, and neither says why. Each script
+prints what it set - read it every time.
+
+```bash
+cd Systronic
+source scripts/setup_local_env.sh    # one machine: replay, MiniPC-only, bench
+source scripts/setup_robot_env.sh    # the Unitree board
+source scripts/setup_ground_env.sh   # the ground station
+source scripts/setup_sdk_env.sh      # the terminal running unitree_udp_bridge
+source scripts/setup_sim_env.sh      # Gazebo - a different robot, see SIM_VS_FIELD.md
+```
+
+Or, after adding `Systronic/scripts/aliases.sh` to `~/.bashrc`: `go2local`, `go2robot`,
+`go2ground`, `go2sdk`, `go2sim`, and `go2which` for "which side am I on".
+
+Site-specific values live in `Systronic/scripts/onsite.env`, which is gitignored. Copy
+`onsite.env.example` and fill it in.
+
+**Never set `RMW_IMPLEMENTATION` globally in `~/.bashrc`.** The navigation
+graph needs Fast DDS and the Unitree bridge needs CycloneDDS; a global default
+is silently wrong in half the terminals.
+
+## Build
+
+```bash
+cd /home/sys20/projects/systonic-2307/Systronic
+source /opt/ros/foxy/setup.bash
+colcon build --packages-select go2_control
+source install/setup.bash
+```
+
+Editing a launch file or a config without rebuilding leaves the old copy in
+`install/` in use, with no warning. It is the most common wasted hour here.
+
+## The Chain, End To End
+
+```text
+1  Livox Mid-360                       ->  /livox/lidar, /livox/imu
+2  livox_ros_driver2                       10 Hz
+3  fastlio_mapping                      ->  /Odometry, /cloud_registered_body
+4  lio_odom_relay                       ->  TF odom -> base_link
+5  pointcloud_to_laserscan              ->  /scan
+6  amcl  (needs map_server)             ->  TF map -> odom
+7  Nav2  (needs both TFs + /scan + map) ->  /cmd_vel
+8  sensor_watchdog                          cuts on stale sensors
+9  cmd_vel_node                             clamps, needs robot_ack
+--- ROS ends here ---
+10 cmd_vel_udp_relay -> UDP 127.0.0.1:32123 -> unitree_udp_bridge -> the robot
+```
+
+Steps 1-9 work. Step 10 has never been shown to move this robot.
+
+`/scan` is projected from `/cloud_registered_body`, not from the raw
+`/livox/lidar`, so **FAST-LIO must be running or `/scan` is silent** with no
+error anywhere.
+
+Step 10 is two processes because one process picks its RMW once, at startup,
+and the two halves need different ones.
+
+## Key Files
+
+```text
+launch/livox_robot.launch.py       everything that runs on the board
+launch/livox_ground.launch.py      everything on the ground station
+launch/livox_slam.launch.py        making a map
+launch/livox_amcl.launch.py        localisation only, no path to motion
+launch/livox_mid360_lio.launch.py  sensor + FAST-LIO alone
+
+config/nav2_livox_go2.yaml         Nav2      (+ _lowcpu variant)
+config/amcl_livox.yaml             AMCL      (+ _lowcpu variant)
+config/fast_lio2_mid360.yaml       FAST-LIO
+config/fastdds_udp_only.xml        the navigation graph's DDS
+config/cyclonedds_unitree_wlan.xml the Unitree bridge's DDS
+
+go2_control/send_mission.py        send a goal or waypoint list, no RViz needed
+go2_control/record_waypoint.py     write the waypoint files send_mission reads
+go2_control/nav_ready_check.py     is the stack ready for a goal, headless
+go2_control/unitree_udp_bridge.py  api / sdk / probe
+go2_control/sensor_watchdog.py     stops on stale sensors
+go2_control/amcl_drift_check.py    measures AMCL against FAST-LIO
+
+Systronic/scripts/deploy_to_board.sh         rsync + colcon on the board
+Systronic/scripts/check_robot_link.sh        why is the topic list empty
+Systronic/scripts/measure_board_load.sh      does the board have the CPU for this
+Systronic/scripts/collect_logs.sh            take the evidence home
+```
+
+## Where Things Stand
+
+```text
+localisation error   0.258 m mean, 0.494 m max over a 33.7 m replayed walk
+                     enough for open floor and wide corridors
+                     not enough for a 0.9 m doorway or an accurate photo stop
+board CPU            never measured. Systronic/scripts/measure_board_load.sh is for this
+step 10              api mode never proven on the robot
+camera and upload    not written
+AprilTag             never tested on site
+```
+
+Parameter tuning is close to exhausted as a route to a lower error. AprilTag is
+the plan for the accuracy the mission needs, which makes it required rather
+than a fallback.
+
+## Findings That Contradict Older Plans
+
+Measured on 2026-09-03, two to three runs per condition, in
+`LIVOX_AMCL_TUNING_2026-09-03.md`:
+
+- **Do not hand-edit maps to help AMCL.** It made things worse both times, in
+  proportion to how much editing was done, and made the result unstable.
+  Editing draws walls the real scan still goes through. Sealing a map is for
+  Nav2's planner; that is a different need and worth doing separately.
+- **Use the physical mount angle, 13.0/0.0/0.35**, not the 10.26/1.72/0.43
+  fitted from the cloud, even against a map built with the fitted values.
+- **Lowering AMCL's alphas does not move the mean, it halves the peak.** That
+  is the useful effect: a large correction arrives as a jump, and the jump is
+  what makes the controller lurch.
+
+## Traps That Cost Whole Sessions
+
+```text
+replay defaults to true on livox_robot.launch.py. A live run without
+replay:=false waits forever for a /clock that never comes.
+
+ros2 bag play has no --clock on Foxy. The bag_clock node supplies it.
+
+FAST-LIO diverges when starved of CPU. It does not slow down: the pose runs
+away to tens of thousands of metres while every process stays alive and every
+topic keeps publishing.
+
+Deleting /dev/shm/fastrtps_* while ROS is running breaks the transport for
+every live participant. Symptom: a topic with a publisher and no data.
+
+CycloneDDS 0.7 on Foxy needs the legacy <NetworkInterfaceAddress>. Given the
+newer syntax it creates no participant and says nothing.
+
+RViz shows nothing when its Reliability is Reliable and the publisher is best
+effort - /scan, /particlecloud, /livox/lidar all are. No error either way.
+
+The board does not answer ICMP. A failed ping proves nothing; test port 22.
+
+The Unitree bridge belongs on ROS_DOMAIN_ID 0, Unitree's own domain, not the
+site domain the rest of the stack uses.
+
+Wrong SDK interface: the bridge arms, reports ready, and no command reaches
+the legs. Set UNITREE_IF once in onsite.env.
+```
+
+## If Editing
+
+Keep changes scoped to `src/go2_control` and `src/go2_interfaces`.
+
+Do not remove safety gates. Do not make `/cmd_vel` enabled by default. Prefer
+launch or environment parameters over hardcoded IPs, interfaces and map paths -
+every hardcoded one of those has already caused a failure here.
+
+Two runs minimum before believing a measurement. Several results in this
+project reversed between the first and second run of the same condition.
