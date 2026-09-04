@@ -48,6 +48,7 @@ alias go2deploy='$_GO2_WS/scripts/deploy_to_board.sh unitree@${ROBOT_IP:-192.168
 # The board's build log, when a build failed and the terminal has moved on.
 alias go2boardlog='rsync -az unitree@${ROBOT_IP:-192.168.123.161}:${REMOTE_WS:-go2_ws}/log/latest_build/ ./board_build_log/ && echo "in ./board_build_log/ - the compiler errors are in */stderr.log"'
 
+alias go2doctor='$_GO2_WS/scripts/diagnose.sh'
 alias go2logs='$_GO2_WS/scripts/collect_logs.sh'
 alias go2cpu='$_GO2_WS/scripts/measure_board_load.sh'
 alias go2build='(cd $_GO2_WS && source /opt/ros/foxy/setup.bash && colcon build --packages-select go2_control)'
