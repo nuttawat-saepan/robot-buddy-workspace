@@ -55,8 +55,21 @@ ros2 run go2_control unitree_udp_bridge --mode probe --interface $UNITREE_IF
 Sends no motion command and needs no `robot_ack`.
 
 **Gate:** the probe reports a subscriber on the request topic, or the sport
-service answers. If neither, try `--request-topic /api/wheeled_sport/request`
-and then `--mode sdk`.
+service answers.
+
+If neither, **find the real topic rather than guessing a name**:
+
+```bash
+ros2 topic list | grep api
+```
+
+`/api/sport/request` is what Unitree documents, what every SDK example uses,
+and what `go2w_cmd_vel_control` - written for this robot - publishes to. The
+topic is the same across models; what differs between them is the service
+registered behind it. But none of that has been confirmed against this
+particular robot, so read the list before assuming.
+
+Then `--mode sdk` as the other path.
 
 ### O2 · One step, without Nav2 · 0.5 h
 
@@ -220,10 +233,10 @@ visit rather than squeezed into the end of the first.
 Do not move on to the sensor work to feel productive. The sensor, the map and
 Nav2 can all be done at a desk against a recorded bag; the command path cannot.
 
-In order: `--request-topic /api/wheeled_sport/request`, then `--mode sdk`, then
-check `UNITREE_IF` against `ip addr` on the machine actually running the
-bridge, then confirm `ROS_DOMAIN_ID` is 0 in that terminal - Unitree's own
-traffic is on domain 0, not the site domain.
+In order: `ros2 topic list | grep api` and use whatever is actually there,
+then `--mode sdk`, then check `UNITREE_IF` against `ip addr` on the machine
+actually running the bridge, then confirm `ROS_DOMAIN_ID` is 0 in that terminal
+- Unitree's own traffic is on domain 0, not the site domain.
 
 Record a bag throughout, and run `go2logs` before the terminals are closed. The
 last two sessions could not be diagnosed afterwards because the evidence was in

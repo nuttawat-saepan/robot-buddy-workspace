@@ -15,8 +15,11 @@ as error 3102 with no indication that the service name is the problem.
 
     --mode api   publish unitree_api/msg/Request onto a request topic.
                  No service discovery, so the Go2W's service naming cannot
-                 break it. This is the path proven to move this robot, and
-                 the default.
+                 break it. The default topic, /api/sport/request, is the one
+                 Unitree documents and the one go2w_cmd_vel_control uses; it
+                 is the same on every model, because what differs between
+                 models is the service registered behind it, not the topic.
+                 UNVERIFIED on this robot - confirm with --mode probe.
 
     --mode sdk   call SportClient, which is simpler but depends on the SDK
                  finding a service named `sport`. Kept because it works on a
@@ -57,8 +60,12 @@ def parse_args():
     parser.add_argument('--interface', default='wlp4s0',
                         help='Interface CycloneDDS binds to for sdk and probe modes.')
     parser.add_argument('--request-topic', default='/api/sport/request',
-                        help='api mode only. Try /api/wheeled_sport/request if '
-                             'the default is not picked up by this robot.')
+                        help='api mode only. The default is the topic Unitree '
+                             'documents and every SDK example uses, including '
+                             'go2w_cmd_vel_control, which is written for this '
+                             'robot. If nothing is subscribed to it, list the '
+                             'robot\'s topics and use what is actually there - '
+                             'do not guess a name.')
     parser.add_argument('--port', type=int, default=32123)
     parser.add_argument('--timeout', type=float, default=0.5,
                         help='Seconds without a packet before the robot is stopped.')
@@ -156,9 +163,11 @@ def run_probe(args):
         if peers:
             print('  the robot is listening, --mode api should work')
         else:
-            print('  nobody is listening on that topic. Either the robot is '
-                  'not reachable on this interface, or it takes requests on '
-                  '/api/wheeled_sport/request - try --request-topic')
+            print('  nobody is listening on that topic.')
+            print('  Either the robot is not reachable on this interface, or it')
+            print('  takes requests somewhere else. Find out rather than guess:')
+            print('    ros2 topic list | grep api')
+            print('  then pass what you find to --request-topic.')
         node.destroy_node()
         rclpy.shutdown()
     except Exception as exc:                      # noqa: BLE001 - report anything
@@ -233,8 +242,9 @@ def run_api(args):
           flush=True)
     if peers == 0:
         print('warning: nothing is subscribed to that topic. Commands will be '
-              'published and go nowhere. Run --mode probe, and try '
-              '--request-topic /api/wheeled_sport/request.', flush=True)
+              'published and go nowhere. Run --mode probe, and list the '
+              'robot\'s own topics with: ros2 topic list | grep api',
+              flush=True)
     else:
         print(f'  {peers} subscriber(s) on the request topic', flush=True)
 

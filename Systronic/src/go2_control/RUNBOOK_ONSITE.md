@@ -391,12 +391,16 @@ ros2 run go2_control unitree_udp_bridge --mode probe --interface wlp4s0
 path 1  SDK     ถ้าตอบ API version มาแปลว่า --mode sdk ใช้ได้
                 ถ้าตอบ code 3102 แปลว่าหุ่นเป็น Go2W ให้ใช้ --mode api
 path 2  api     ถ้าเห็น subscriber มากกว่าศูนย์ แปลว่า --mode api ใช้ได้
-                ถ้าเห็นศูนย์ ลอง --request-topic /api/wheeled_sport/request
+                ถ้าเห็นศูนย์ ดู ros2 topic list | grep api แล้วใช้ชื่อที่เจอจริง
 ```
 
 **หุ่นตัวนี้เป็น Go2W** service ภายในชื่อ `wheeled_sport` ไม่ใช่ `sport` ที่ SDK
 มองหา ดังนั้นทางที่คาดว่าจะใช้ได้คือ `--mode api` ซึ่งเป็นค่า default อยู่แล้ว
 ทาง SDK เก็บไว้เผื่อ เพราะบน Go2 ธรรมดามันใช้ได้
+
+**ชื่อ topic ยังไม่เคยยืนยันกับหุ่นตัวนี้** ค่า default `/api/sport/request` มาจาก
+เอกสารของ Unitree และจากโค้ดที่เขียนสำหรับ Go2W โดยเฉพาะ ซึ่งเป็นหลักฐานที่ดี
+แต่ไม่ใช่การยืนยัน ถ้าไม่ตรงให้ดูรายการจริงจากหุ่น อย่าเดาชื่อเอง
 
 ### 8.2 เปิดสองเทอร์มินัล
 
@@ -428,11 +432,21 @@ ros2 run go2_control unitree_udp_bridge \
 **ถ้าขึ้น warning ว่าไม่มีใครฟัง อย่ากด goal** คำสั่งจะถูกส่งออกไปแล้วหายไปเฉย ๆ
 กลับไปทำข้อ 8.1 ใหม่
 
-ถ้าทาง api เงียบ สลับไปทางอื่นได้โดยไม่ต้องแก้โค้ด
+ถ้าทาง api เงียบ **อย่าเดาชื่อ topic ให้ไปดูของจริง**
 
 ```bash
-  --request-topic /api/wheeled_sport/request     # ลอง endpoint อีกชื่อ
-  --mode sdk                                     # ลองทาง SportClient
+ros2 topic list | grep api
+```
+
+`/api/sport/request` คือชื่อที่ Unitree ประกาศเอง ทุกตัวอย่างใน SDK ใช้ตัวนี้
+และ `go2w_cmd_vel_control` ซึ่งเขียนสำหรับหุ่นตัวนี้โดยเฉพาะก็ใช้ตัวนี้
+ชื่อ topic เหมือนกันทุกรุ่น สิ่งที่ต่างกันคือ service ที่อยู่ข้างหลัง ไม่ใช่ topic
+
+**แต่ยังไม่เคยยืนยันกับหุ่นตัวนี้** ดูรายการจริงก่อนเสมอ แล้วค่อยส่งชื่อที่เจอเข้าไป
+
+```bash
+  --request-topic <ชื่อที่เจอจริง>
+  --mode sdk                          # ทาง SportClient
 ```
 
 `--timeout 0.5` คือถ้าไม่ได้รับคำสั่งเกินครึ่งวินาที ให้หยุดหุ่น ทาง api ส่ง
