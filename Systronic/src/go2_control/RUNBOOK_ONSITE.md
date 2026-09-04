@@ -379,8 +379,56 @@ StopMove ทาง sdk ส่งความเร็วศูนย์
 
 ### ทดสอบเป้าแรก
 
-ตั้งเป้าห่างหนึ่งเมตรตรงหน้า ด้วยปุ่ม 2D Goal Pose ใน RViz
-ดูว่าหุ่นเดินถึงแล้วหยุดเองได้หรือไม่ อย่าเพิ่งตั้งเป้าที่ต้องเลี้ยว
+ไม่ต้องใช้ RViz แล้ว ใช้คำสั่งนี้แทน มันจะเช็คความพร้อมให้ก่อนแล้วปฏิเสธถ้ายังไม่พร้อม
+
+```bash
+# ดูก่อนว่าจะส่งอะไร ไม่ส่งจริง
+ros2 run go2_control send_mission --goal 1.0 0.0 0.0 --dry-run
+
+# ส่งจริง หนึ่งเมตรตรงหน้า
+ros2 run go2_control send_mission --goal 1.0 0.0 0.0
+```
+
+มันจะพิมพ์ระยะที่เหลือทุกวินาที จะได้รู้ว่าหุ่นขยับจริงไหมโดยไม่ต้องเดา
+
+```text
+    1.02 m to go,   3s elapsed, 0 recovery/ies
+    0.61 m to go,   8s elapsed, 0 recovery/ies
+    reached
+```
+
+**Ctrl-C จะส่ง cancel ให้ Nav2 จริง** ไม่ใช่แค่ปิดโปรแกรมทิ้ง หุ่นจะหยุด
+
+ถ้ายังไม่พร้อม มันจะบอกว่าเพราะอะไรแล้วไม่ส่ง goal เลย
+
+```text
+  particle spread  FAIL  0.612 m, above 0.35 m - AMCL has not settled
+                   NOT READY - do not send a goal
+not ready - no goal was sent.
+```
+
+อย่าเพิ่งตั้งเป้าที่ต้องเลี้ยว เอาตรงหน้าก่อน
+
+### เดินหลายจุด
+
+บันทึกจุดก่อน เข็นหุ่นไปตำแหน่งที่ต้องการแล้วกด Enter
+
+```bash
+ros2 run go2_control record_waypoint --file missions/site_a.json
+```
+
+พิมพ์ชื่อก่อนกด Enter เพื่อตั้งชื่อจุด, `c` เพื่อทำเครื่องหมายจุดถ่ายรูป,
+`u` เพื่อลบจุดล่าสุด, Ctrl-C เพื่อจบ ไฟล์ถูกเขียนทุกครั้งที่บันทึก
+
+แล้วสั่งเดินตามจุด
+
+```bash
+ros2 run go2_control send_mission --file missions/site_a.json --dry-run
+ros2 run go2_control send_mission --file missions/site_a.json
+```
+
+จุดที่ทำเครื่องหมาย `capture` ไว้ หุ่นจะหยุดรอ แต่**ยังไม่ถ่ายรูป**
+กล้องกับการอัปโหลดยังไม่ได้เขียน รูปแบบไฟล์เตรียมรองรับไว้แล้ว
 
 ---
 
