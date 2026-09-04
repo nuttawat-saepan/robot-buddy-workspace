@@ -59,17 +59,23 @@ SPREAD_LIMIT_M = 0.35
 
 class NavReadyCheck(Node):
 
-    def __init__(self, node_name='nav_ready_check', periodic=True):
+    def __init__(self, node_name='nav_ready_check', periodic=True,
+                 overrides=None):
         super().__init__(node_name)
-        self.map_frame = self.declare_parameter('map_frame', 'map').value
-        self.odom_frame = self.declare_parameter('odom_frame', 'odom').value
-        self.base_frame = self.declare_parameter('base_frame', 'base_link').value
-        self.cmd_topic = self.declare_parameter(
-            'controller_cmd_topic', '/cmd_vel_nav_preview').value
-        costmap_topic = self.declare_parameter(
-            'costmap_topic', '/local_costmap/costmap').value
-        self.scan_topic = self.declare_parameter('scan_topic', '/scan').value
-        self.period = self.declare_parameter('report_period', 3.0).value
+        # Callers that already know a value pass it here rather than declaring
+        # the parameter twice under a different node name.
+        overrides = overrides or {}
+
+        def declared(name, default):
+            return self.declare_parameter(name, overrides.get(name, default)).value
+
+        self.map_frame = declared('map_frame', 'map')
+        self.odom_frame = declared('odom_frame', 'odom')
+        self.base_frame = declared('base_frame', 'base_link')
+        self.cmd_topic = declared('controller_cmd_topic', '/cmd_vel_nav_preview')
+        costmap_topic = declared('costmap_topic', '/local_costmap/costmap')
+        self.scan_topic = declared('scan_topic', '/scan')
+        self.period = declared('report_period', 3.0)
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)

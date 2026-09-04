@@ -57,9 +57,10 @@ src/go2_control/RUNBOOK_ONSITE.md              the commands for each of those st
 src/go2_control/LIVOX_DEPLOYMENT_PLAN.md       how the deployment is meant to work
 src/go2_control/LIVOX_AMCL_TUNING_2026-09-03.md what actually moves the error
 src/go2_control/LIVOX_MID360_MIGRATION.md      how the Livox path fits together
+src/go2_control/SIM_VS_FIELD.md                what the sim can and cannot tell you
 ```
 
-## Four Environments, And They Are Not Interchangeable
+## Five Environments, And They Are Not Interchangeable
 
 Sourcing the wrong one is not an error. `ros2 topic list` comes back empty, or
 a topic has a publisher and delivers nothing, and neither says why. Each script
@@ -70,10 +71,11 @@ source scripts/setup_local_env.sh    # one machine: replay, MiniPC-only, bench
 source scripts/setup_robot_env.sh    # the Unitree board
 source scripts/setup_ground_env.sh   # the ground station
 source scripts/setup_sdk_env.sh      # the terminal running unitree_udp_bridge
+source scripts/setup_sim_env.sh      # Gazebo - a different robot, see SIM_VS_FIELD.md
 ```
 
 Or, after adding `scripts/aliases.sh` to `~/.bashrc`: `go2local`, `go2robot`,
-`go2ground`, `go2sdk`, and `go2which` for "which side am I on".
+`go2ground`, `go2sdk`, `go2sim`, and `go2which` for "which side am I on".
 
 Site-specific values live in `scripts/onsite.env`, which is gitignored. Copy
 `onsite.env.example` and fill it in.

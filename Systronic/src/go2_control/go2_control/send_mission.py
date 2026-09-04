@@ -76,6 +76,13 @@ def parse_args(argv):
     parser.add_argument('--capture-pause', type=float, default=3.0,
                         help='Seconds to hold at a waypoint marked capture.')
     parser.add_argument('--frame', default='map')
+    parser.add_argument('--controller-topic', default='/cmd_vel_nav_preview',
+                        help='Topic the controller publishes velocity on, used '
+                             'only to tell whether it is active. The Livox '
+                             'launch files remap it away from /cmd_vel so a '
+                             'planning run cannot reach the robot; a stock Nav2 '
+                             'bringup, including the Gazebo sim, leaves it as '
+                             '/cmd_vel.')
     return parser.parse_args(argv)
 
 
@@ -216,7 +223,8 @@ def main(argv=None):
         return
 
     rclpy.init()
-    check = NavReadyCheck(node_name='send_mission_ready', periodic=False)
+    check = NavReadyCheck(node_name='send_mission_ready', periodic=False,
+                          overrides={'controller_cmd_topic': args.controller_topic})
     node = rclpy.create_node('send_mission')
     runner = MissionRunner(node, frame, args.capture_pause)
 

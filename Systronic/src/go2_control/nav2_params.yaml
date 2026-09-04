@@ -26,7 +26,11 @@ amcl:
     recovery_alpha_fast: 0.0
     recovery_alpha_slow: 0.0
     resample_interval: 1
-    robot_model_type: "nav2_amcl::DifferentialMotionModel"
+    # Foxy takes "differential", not the plugin class name.
+    # "nav2_amcl::DifferentialMotionModel" is the Galactic form; given it,
+    # Foxy's AMCL segfaults at startup - exit code -11, no message - and
+    # every later failure reads as a missing map->odom transform instead.
+    robot_model_type: "differential"
     save_pose_rate: 0.5
     sigma_hit: 0.2
     tf_broadcast: true
