@@ -60,6 +60,16 @@ for pkg in go2_control go2_interfaces; do
     rsync "${RSYNC_FLAGS[@]}" "src/$pkg/" "$TARGET:$REMOTE_WS/src/$pkg/"
 done
 
+# The scripts travel too. Everything the runbook tells you to do on the board -
+# source setup_robot_env.sh, check the link, measure the CPU, collect the logs
+# afterwards - is a file in here, and for a long time none of them were on the
+# board at all. onsite.env is the one exclusion: UNITREE_IF names a different
+# card on each machine, so the board keeps its own copy. rsync's --delete does
+# not remove excluded files on the receiver, so the board's survives this.
+echo "  scripts"
+rsync "${RSYNC_FLAGS[@]}" --exclude 'onsite.env' \
+    scripts/ "$TARGET:$REMOTE_WS/scripts/"
+
 # The maps are the largest thing that legitimately travels, and only the site
 # map is wanted on the robot - but the robot side does not load a map at all,
 # map_server runs on the ground station. Kept out entirely; if that changes,
@@ -109,9 +119,18 @@ cat <<EOM
 
 == next on the board
 
-  source $REMOTE_WS/../$(basename "$WS")/scripts/setup_robot_env.sh 2>/dev/null \\
-      || source $REMOTE_WS/src/go2_control/../../scripts/setup_robot_env.sh
+  source $REMOTE_WS/scripts/setup_robot_env.sh
   ros2 launch go2_control livox_robot.launch.py replay:=false
+
+onsite.env is not synced - UNITREE_IF names a different card on each machine.
+Fill it in once on the board:
+
+  ssh $TARGET 'cd $REMOTE_WS/scripts && cp -n onsite.env.example onsite.env && nano onsite.env'
+
+When something goes wrong, run this while the stack is still up. It is
+read-only, and most of what it captures is gone once the terminals close:
+
+  ssh $TARGET '$REMOTE_WS/scripts/collect_logs.sh "what you had just done"' 
 
 If a node cannot see something that is plainly running, clean the stale DDS
 segments before debugging anything else - repeated restarts leave them behind
