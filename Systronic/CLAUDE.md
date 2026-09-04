@@ -52,7 +52,8 @@ ROS distro:     Foxy
 Read first:
 
 ```text
-src/go2_control/RUNBOOK_ONSITE.md              what to do on site, in order
+src/go2_control/ONSITE_PLAN.md                 what to do on site, in what order, why
+src/go2_control/RUNBOOK_ONSITE.md              the commands for each of those steps
 src/go2_control/LIVOX_DEPLOYMENT_PLAN.md       how the deployment is meant to work
 src/go2_control/LIVOX_AMCL_TUNING_2026-09-03.md what actually moves the error
 src/go2_control/LIVOX_MID360_MIGRATION.md      how the Livox path fits together
