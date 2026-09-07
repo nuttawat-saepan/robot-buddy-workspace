@@ -20,9 +20,24 @@ fi
 # Must match the board. FastRTPS and CycloneDDS cannot talk to each other at
 # all, and the symptom is an empty topic list rather than an error.
 export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
-export CYCLONEDDS_URI="<CycloneDDS><Domain><General><Interfaces>
-    <NetworkInterface name=\"${GROUND_NET_IF:-wlp4s0}\" priority=\"default\" multicast=\"default\" />
-</Interfaces></General></Domain></CycloneDDS>"
+# The legacy <NetworkInterfaceAddress> element, not <Interfaces>. ROS 2 Foxy
+# on this machine ships CycloneDDS 0.7, which given the newer syntax creates no
+# participant at all and reports only:
+#
+#   config: //CycloneDDS/Domain/General: Interfaces: unknown element
+#
+# after which every node dies with "rmw handle is invalid". The board runs a
+# newer CycloneDDS that merely warns the element is deprecated, so the legacy
+# form is the one both ends accept.
+#
+# The unicast peer matters because most site APs drop or isolate multicast, and
+# without it the two machines never discover each other however well configured
+# they are.
+export CYCLONEDDS_URI="<CycloneDDS><Domain id=\"any\"><General>
+    <NetworkInterfaceAddress>${GROUND_NET_IF:-wlp4s0}</NetworkInterfaceAddress>
+</General><Discovery><Peers>
+    <Peer address=\"${ROBOT_IP:-192.168.80.109}\" />
+</Peers></Discovery></Domain></CycloneDDS>"
 
 # Every node in this project launches with output='screen', which on Foxy means
 # the terminal and nowhere else: launch.log gets three lines about processes
