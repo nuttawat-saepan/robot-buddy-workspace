@@ -135,6 +135,26 @@ controller_server:
       # them too.
       # First live-robot crawl limit. Raise only after a short clear-floor run
       # has shown that localisation, obstacle sensing, and the stop path hold.
+      # Tuned live on the robot, 2026-09-07, by setting parameters on the
+      # running controller_server and watching it drive:
+      #
+      #   0.05  the value this file shipped with. The wheeled base does not
+      #         execute it at all - it twitched for about a second and stopped
+      #         under a steady stream, and under Nav2 it marched in place
+      #         while the recovery behaviours backed away from a goal that
+      #         never got closer.
+      #   0.20  drives, but slowly.
+      #   0.40  the operator's choice after driving both.
+      #
+      # Rotation went the same way: 0.20 rad/s is 11 deg/s, eight seconds for
+      # a right angle, and the robot read as barely turning. 0.6 overshot,
+      # 0.35 was settled on.
+      #
+      # unitree_udp_bridge clamps independently with --max-linear and
+      # --max-angular, and its clamp wins. Set it above these or the robot
+      # runs at the bridge's limit while Nav2 believes it is doing something
+      # else.
+      #
       # Raised from 0.05 on site 2026-09-07. 0.05 m/s is below the speed this
       # wheeled base will actually execute: measured the same day, a steady
       # 0.05 command stream made it twitch for about a second and stop, while
@@ -145,17 +165,17 @@ controller_server:
       #
       # 0.05 was chosen when this was assumed to be a walking quadruped, which
       # can creep. It is not one.
-      max_vel_x: 0.20
+      max_vel_x: 0.40
       min_vel_x: 0.0
       max_vel_y: 0.0
       min_vel_y: 0.0
-      max_vel_theta: 0.20
+      max_vel_theta: 0.35
       min_speed_xy: 0.0
-      max_speed_xy: 0.20
+      max_speed_xy: 0.40
       min_speed_theta: 0.0
-      acc_lim_x: 0.15
+      acc_lim_x: 0.35
       acc_lim_y: 0.0
-      acc_lim_theta: 0.30
+      acc_lim_theta: 0.50
       decel_lim_x: -1.5
       decel_lim_y: 0.0
       decel_lim_theta: -2.5
