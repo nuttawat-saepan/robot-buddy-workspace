@@ -25,7 +25,10 @@ it. See `LIVOX_AMCL_TUNING_2026-09-03.md`. Sealing a map is worth doing for
 Nav2's planner, which is a different job and not urgent.
 
 **Measuring the board's CPU is promoted to its own item.** The finished system
-runs everything on the board's 4 cores while leaving the leg controller alone.
+runs everything on the board's 8 cores while leaving the leg controller alone.
+(Counted on the board 2026-09-07: 8 cores, 15 GB RAM, 197 GB free. Earlier
+documents said 4 cores, and that was the number this whole question was
+being judged against.)
 Nobody has measured whether that fits. If it does not, the architecture changes,
 and that is worth knowing before more is built on top of it.
 
@@ -106,15 +109,17 @@ go2hz
 
 ### O4 · FAST-LIO on aarch64, and the CPU budget · 2 h
 
-Build with `-j2`. Each compiler process peaked at 2825 MB on the MiniPC; the
-board has about 13 GB free, so `-j4` will hit the ceiling.
+Build with `--parallel-workers 2`, which deploy_to_board.sh now passes.
+Each compiler process peaked at 2825 MB on the MiniPC and the board has
+about 13 GB free, so this is a memory ceiling rather than a core count -
+the 8 cores are not the constraint, the RAM is.
 
 ```bash
 go2cpu 60      # while a goal is running, not while the stack is idle
 ```
 
 **Gate:** odometry does not drift while the robot stands still, and the robot
-side stays under about 2 of the 4 cores.
+side stays under about half the 8 cores, leaving the leg controller room.
 
 If `go2cpu` reports OVER, switch to `nav2_livox_go2_lowcpu.yaml` and
 `amcl_livox_lowcpu.yaml` rather than editing values by hand. **Record the

@@ -9,7 +9,11 @@
 # costs far less than one that is planning, and the idle number is the one
 # that misleads.
 #
-# The board has 4 cores. The acceptance figure from LIVOX_DEPLOYMENT_PLAN.md
+# The board has 8 cores and about 15 GB of RAM - counted on it, 2026-09-07,
+# not assumed. Earlier documents said 4, and that number was what the whole
+# "will it run on the board" question was being judged against. The budget
+# below is computed from nproc, so it was always right even while the prose
+# was wrong. The acceptance figure from LIVOX_DEPLOYMENT_PLAN.md
 # section 2.4 is that the robot-side set stays under about 2 of those 4 with
 # Unitree's own stack running, so the leg controller is never starved.
 #
