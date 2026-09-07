@@ -126,6 +126,40 @@ If `go2cpu` reports OVER, switch to `nav2_livox_go2_lowcpu.yaml` and
 number either way** - it is the answer to whether everything can run on the
 board, and nobody has it yet.
 
+### O4 result, measured 2026-09-07
+
+45 s on the board with the sensing stack running - driver, FAST-LIO,
+lio_odom_relay, pointcloud_to_laserscan, sensor_watchdog - and the robot
+stationary.
+
+```text
+machine   aarch64, 8 cores, 15388 MB total, 13791 MB available
+
+process                     mean %cpu  peak %cpu   peak MB
+sensor_watchdog                 105.3      173.0        59
+fastlio_mapping                  26.9       27.3       162
+lio_odom_relay                   16.6       19.8        52
+livox_ros_drive                  10.4       19.8        35
+
+TOTAL                           159.2      239.7
+mean cost  1.59 of 8 cores      peak cost  2.40 of 8 cores      PASS
+```
+
+**The architecture fits.** Running everything on the board costs about 1.6 of
+8 cores with the sensor stack up, which leaves the leg controller alone. That
+was the open question this project has carried from the beginning, and the
+answer is yes.
+
+**But sensor_watchdog costs four times what FAST-LIO does**, and it is two
+thirds of the total. It subscribes to /scan and /Odometry only to note that a
+message arrived, and runs one 20 Hz timer. Nothing about that should cost a
+whole core. This has not been diagnosed and it is not urgent - the budget
+passes with it - but it is the single largest saving available, and the
+finished system will want it back for Nav2 and the camera.
+
+Nav2 and AMCL were not running during this measurement. Repeat it with a goal
+in progress before treating 1.59 as the figure for the whole stack.
+
 ### O5 · Make the map · 2 h
 
 ```bash
