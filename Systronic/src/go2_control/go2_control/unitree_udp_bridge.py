@@ -232,7 +232,9 @@ def run_raw(args):
     """
     from unitree_sdk2py.core.channel import (ChannelFactoryInitialize,
                                              ChannelPublisher)
-    from unitree_sdk2py.idl.unitree_api.msg.dds_ import Request_
+    from unitree_sdk2py.idl.unitree_api.msg.dds_ import (
+        Request_, RequestHeader_, RequestIdentity_, RequestLease_,
+        RequestPolicy_)
 
     ChannelFactoryInitialize(0, args.interface)
     # The SDK speaks raw DDS names. ROS prefixes its topics with "rt/", so the
@@ -242,9 +244,16 @@ def run_raw(args):
     pub.Init()
 
     def send(api_id, parameter=''):
-        request = Request_()
-        request.header.identity.api_id = api_id
-        request.parameter = parameter
+        # The IDL dataclasses take every field positionally - there are no
+        # defaults - so the whole nested structure is built each time rather
+        # than assigned into.
+        request = Request_(
+            header=RequestHeader_(
+                identity=RequestIdentity_(id=0, api_id=api_id),
+                lease=RequestLease_(id=0),
+                policy=RequestPolicy_(priority=0, noreply=False)),
+            parameter=parameter,
+            binary=[])
         pub.Write(request)
 
     print(f'armed: raw mode, dds topic {topic}, udp port {args.port}',
