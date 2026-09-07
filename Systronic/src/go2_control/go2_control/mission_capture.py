@@ -15,10 +15,17 @@ when this was taken", and that is the question the web interface has to answer.
 
 ## The frame source is chosen, not assumed
 
-    unitree   the robot's own camera through the SDK        (site)
+    rtsp      an RTSP URL, opened with OpenCV              (the Go2W's D455)
+    unitree   the robot's own camera through the SDK        (a plain Go2)
     topic     any sensor_msgs/Image publisher              (Gazebo, a webcam)
     test      a generated frame with the pose drawn on it  (this desk)
-    auto      unitree, then topic, then test               (default)
+    auto      rtsp, then unitree, then topic, then test    (default)
+
+On this robot the camera is a RealSense D455 served over RTSP at
+rtsp://127.0.0.1:8554/d455f by GstRealsense, and its ROS topic lives on
+ROS_DOMAIN_ID 0 where no node of ours can survive - rclpy and rclcpp both
+segfault there against the robot's graph. RTSP goes nowhere near DDS, which is
+why it is tried first.
 
 `test` is not a stub to be replaced later. Everything downstream of the frame -
 the pose lookup, the JSON sidecar, the file naming, the done message, the
@@ -69,6 +76,17 @@ class MissionCapture(Node):
         self.source = self.declare_parameter('source', 'auto').value
         self.image_topic = self.declare_parameter(
             'image_topic', '/camera/stream').value
+        self.rtsp_url = self.declare_parameter(
+            'rtsp_url', 'rtsp://127.0.0.1:8554/d455f').value
+        # Opening an RTSP stream takes a couple of seconds and the first frames
+        # are often empty, so the capture reads a few before giving up.
+        self.rtsp_reads = self.declare_parameter('rtsp_reads', 40).value
+        # Frames to read and throw away before keeping one. The first frames
+        # after a grab are decoded from a partial H.264 GOP and come out with
+        # vertical banding across the top - visible in the first capture taken
+        # on site. A smeared frame is merely ugly for a mission photograph and
+        # useless for AprilTag, which is what this camera is ultimately for.
+        self.rtsp_warmup = self.declare_parameter('rtsp_warmup', 8).value
         self.map_frame = self.declare_parameter('map_frame', 'map').value
         self.base_frame = self.declare_parameter(
             'base_frame',
@@ -89,6 +107,7 @@ class MissionCapture(Node):
         self._latest_frame = None
         self._latest_frame_time = 0.0
         self._unitree_client = None
+        self._rtsp = None
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -117,6 +136,15 @@ class MissionCapture(Node):
             return 'none'
 
         wanted = self.source
+        if wanted in ('auto', 'rtsp'):
+            if self._try_rtsp():
+                return 'rtsp'
+            if wanted == 'rtsp':
+                self.get_logger().error(
+                    'source:=rtsp was asked for and %s did not open'
+                    % self.rtsp_url)
+                return 'none'
+
         if wanted in ('auto', 'unitree') and self._try_unitree():
             return 'unitree'
         if wanted == 'unitree':
@@ -137,6 +165,19 @@ class MissionCapture(Node):
             return 'topic-or-test'
 
         return 'test'
+
+    def _try_rtsp(self):
+        try:
+            cap = self._cv2.VideoCapture(self.rtsp_url, self._cv2.CAP_FFMPEG)
+            if not cap.isOpened():
+                cap.release()
+                return False
+            self._rtsp = cap
+            self.get_logger().info('camera: %s' % self.rtsp_url)
+            return True
+        except Exception as exc:                  # noqa: BLE001
+            self.get_logger().warn('rtsp unavailable: %s' % exc)
+            return False
 
     def _try_unitree(self):
         try:
@@ -185,6 +226,21 @@ class MissionCapture(Node):
         """Return (frame, source_used) or (None, reason)."""
         if self.source == 'none':
             return None, 'no frame source is available'
+
+        if getattr(self, '_rtsp', None) is not None:
+            good = None
+            warmup = int(self.rtsp_warmup)
+            for i in range(int(self.rtsp_reads)):
+                ok, frame = self._rtsp.read()
+                if ok and frame is not None:
+                    good = frame
+                    if i >= warmup:
+                        return frame, 'rtsp'
+            if good is not None:
+                # Fewer frames arrived than the warmup wanted. A banded frame
+                # beats no photograph of a place the robot may not pass again.
+                return good, 'rtsp (short warmup)'
+            return None, 'no frame from %s' % self.rtsp_url
 
         if self._unitree_client is not None:
             code, data = self._unitree_client.GetImageSample()
