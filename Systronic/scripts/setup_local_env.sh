@@ -38,9 +38,20 @@ export FASTRTPS_DEFAULT_PROFILES_FILE="$WS/src/go2_control/config/fastdds_udp_on
 # a live run to talk to each other.
 export ROS_LOCALHOST_ONLY=1
 
-# Deliberately not the site domain. A local replay must not join the field
-# graph even if both happen to be running.
-export ROS_DOMAIN_ID=0
+# Deliberately neither the site domain nor 0. A local replay must not join the
+# field graph, and domain 0 belongs to Unitree - the robot's own CycloneDDS
+# participants announce themselves there.
+#
+# Measured on site, 2026-09-07, with the MiniPC cabled to the robot's internal
+# network: Fast DDS on domain 0 printed "bad_alloc caught: std::bad_alloc"
+# fourteen times in ten seconds, while the same node on domain 43 printed it
+# none. Fast DDS cannot parse CycloneDDS's participant announcements and gives
+# up on each one, which looks like the machine running out of memory and is
+# not - there were 13 GB free. ROS_LOCALHOST_ONLY does not prevent it, because
+# the transport in fastdds_udp_only.xml is declared before that filter applies.
+#
+# GO2_LOCAL_DOMAIN overrides it if 47 ever collides with something on a site.
+export ROS_DOMAIN_ID="${GO2_LOCAL_DOMAIN:-47}"
 
 # Every node in this project launches with output='screen', which on Foxy means
 # the terminal and nowhere else: launch.log gets three lines about processes
