@@ -94,14 +94,27 @@ controller_server:
 
     goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      stateful: false
+      # true on site 2026-09-07. With stateful false the goal checker re-tests
+      # position and heading together every cycle, so a pose estimate that
+      # wanders by more than the tolerance un-arrives a robot that had already
+      # arrived. Latching the position once reached, and then turning to the
+      # heading, is what this setting is for.
+      stateful: true
       # AMCL leaves 0.65 m of residual on the bench data
       # (LIVOX_AMCL_REPLAY_2026-08-25.md). A goal tolerance tighter than that
       # residual cannot be met by anything except luck, so 0.25 m here is
       # aspirational until loop closure is re-measured with the sensor bolted
       # on. FIELD: check this against the residual measured on the robot.
-      xy_goal_tolerance: 0.25
-      yaw_goal_tolerance: 0.25
+      # 0.25 was below the localisation error it has to be judged against:
+      # 0.258 m mean and 0.494 m max over a 33.7 m replayed walk. A robot
+      # cannot reliably decide it has arrived within a distance smaller than
+      # its own uncertainty, and on site it circled a waypoint for ten seconds
+      # at 0.15-0.24 m and needed a recovery before it accepted the goal.
+      #
+      # This is a floor set by localisation, not a preference. It comes down
+      # again when AprilTag brings the error down, not before.
+      xy_goal_tolerance: 0.35
+      yaw_goal_tolerance: 0.30
 
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"
