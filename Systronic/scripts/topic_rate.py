@@ -41,7 +41,11 @@ def resolve_type(topic, node, deadline):
                 module = __import__('%s.%s' % (package, kind),
                                     fromlist=[message])
                 return getattr(module, message)
-        time.sleep(0.2)
+        # Spin while waiting. Sleeping instead leaves the participant's
+        # discovery unserviced, so the graph stays empty and every topic in a
+        # busy stack reports "absent" while `ros2 topic list` lists all 49 of
+        # them - a false negative from the tool that exists to prevent them.
+        rclpy.spin_once(node, timeout_sec=0.2)
     return None
 
 
@@ -56,7 +60,7 @@ def main(argv=None):
     rclpy.init()
     node = rclpy.create_node('topic_rate_%d' % (int(time.time() * 1000) % 100000))
     try:
-        deadline = time.monotonic() + 3.0
+        deadline = time.monotonic() + 12.0
         message_type = resolve_type(topic, node, deadline)
         if message_type is None:
             print('%-24s absent' % topic)

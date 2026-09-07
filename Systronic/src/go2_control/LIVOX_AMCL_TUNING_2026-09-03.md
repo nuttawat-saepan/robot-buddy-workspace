@@ -184,3 +184,45 @@ instead.
 Two runs per condition is the minimum. The alpha result above would have read
 as noise from one run, and the map result would have read as twice its true
 size.
+
+---
+
+## Field note, 2026-09-07 — the rotational alphas
+
+First run of AMCL against a map built the same afternoon, on the real robot
+rather than a replayed bag. Driving in a straight line tracked well. **Every
+turn threw the particle cloud wide**, and it did not recover quickly.
+
+The two parameters changed, and what they were:
+
+```text
+                        before   after    what it governs
+alpha1                  0.10     0.03     rotation noise from rotation
+alpha2                  0.4      0.10     rotation noise from translation
+```
+
+Everything else was left alone - alpha3 0.4, alpha4 0.08, alpha5 0.2,
+max_beams 60, max_particles 3000, update_min_d 0.20, update_min_a 0.10.
+
+The reasoning: both of these tell AMCL how much rotational error to expect
+from the odometry it is given. That odometry is FAST-LIO's, which is
+IMU-aided and considerably better in rotation than 0.10 and 0.4 allow for. So
+every turn was being entered into the filter as fresh uncertainty, which the
+Mid-360's thin projected scan - about 54% of its beams, a different set each
+frame - then could not resolve. The cloud spread and stayed spread.
+
+The operator reported it behaving better after the change. **That is one run
+and one impression, not a measurement.** This project has had results reverse
+between the first and second run of the same condition, so before these values
+are trusted:
+
+- repeat the same walk twice with the new values and twice with the old,
+- record `amcl_drift_check` output for each, not an impression,
+- and compare against the 0.258 m mean / 0.494 m max measured on the replayed
+  bag, which is still the only number this project has.
+
+If the spread on turning is still poor with alpha1 at 0.03, the cause is not
+the motion model and lowering it further will not help. The remaining
+explanation is that the projected scan is too sparse to constrain rotation at
+all, which is a sensor limitation and the reason AprilTag is in the plan as a
+requirement rather than a fallback.
