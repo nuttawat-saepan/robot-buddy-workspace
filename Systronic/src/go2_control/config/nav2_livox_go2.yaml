@@ -122,13 +122,23 @@ controller_server:
       # them too.
       # First live-robot crawl limit. Raise only after a short clear-floor run
       # has shown that localisation, obstacle sensing, and the stop path hold.
-      max_vel_x: 0.05
+      # Raised from 0.05 on site 2026-09-07. 0.05 m/s is below the speed this
+      # wheeled base will actually execute: measured the same day, a steady
+      # 0.05 command stream made it twitch for about a second and stop, while
+      # 0.20 drove it continuously. Under Nav2 the same floor showed as the
+      # robot marching in place and then reversing - the controller asking for
+      # a speed nothing happens at, and the recovery behaviours backing away
+      # from a goal that never got closer.
+      #
+      # 0.05 was chosen when this was assumed to be a walking quadruped, which
+      # can creep. It is not one.
+      max_vel_x: 0.20
       min_vel_x: 0.0
       max_vel_y: 0.0
       min_vel_y: 0.0
       max_vel_theta: 0.20
       min_speed_xy: 0.0
-      max_speed_xy: 0.05
+      max_speed_xy: 0.20
       min_speed_theta: 0.0
       acc_lim_x: 0.15
       acc_lim_y: 0.0
