@@ -69,6 +69,28 @@ fi
 # launch files, and it is what makes collect_logs.sh worth running.
 export OVERRIDE_LAUNCH_PROCESS_OUTPUT=both
 
+# The board has no RTC battery and NTP is inactive, so its clock returns to
+# 1970 on every boot - and it was found back there hours after being set by
+# hand on 2026-09-07. A clock 56 years out is not cosmetic: every TF from this
+# machine is stamped in 1970, so the ground station discards all of it, RViz
+# shows an empty world, and bags and photographs are dated before the robot
+# existed. It is checked here rather than fixed, because fixing it needs sudo
+# and a silent 56-year jump under running nodes is its own hazard.
+if [ "$(date +%Y)" -lt 2020 ]; then
+    echo "WARNING: this board thinks it is $(date +%Y). Every timestamp it"
+    echo "         produces is wrong, and the ground station will discard its"
+    echo "         TF. Fix it before starting anything:"
+    echo
+    echo "         From the ground station, which knows the time:"
+    echo
+    echo "           ssh unitree@${ROBOT_IP:-192.168.80.109} \\"
+    echo "               \"sudo date -s \\\"\$(date -u +'%F %T') UTC\\\"\""
+    echo
+    echo "         Asking this board for the time only repeats its mistake,"
+    echo "         which is why the command above is run from the other side."
+    echo
+fi
+
 echo "robot environment ready"
 echo "  RMW              $RMW_IMPLEMENTATION"
 echo "  ROS_DOMAIN_ID    ${ROS_DOMAIN_ID:-0}"

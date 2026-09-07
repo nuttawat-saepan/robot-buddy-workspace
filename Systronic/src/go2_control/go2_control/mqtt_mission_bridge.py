@@ -27,6 +27,9 @@ web has been seen to work against it.
                               currentWaypointName, message}
     out  <imageTopic>        {runId, missionId, waypointName, takenAt, pose,
                               image}   - image is base64 JPEG
+    out  /missions/map       {width, height, resolution, origin:{x,y,yaw},
+                              image}   - base64 PNG, occupied pixels dark
+    out  /missions/pose      {x, y, yaw, frame, timestamp}
 
 The reply topics are named by the web inside the mission payload rather than
 being fixed here, which is how main.py works and is worth keeping: one robot
@@ -85,6 +88,15 @@ class MqttMissionBridge(Node):
             self.declare_parameter('pose_period', 1.0).value)
         self.pose_topic = self.declare_parameter(
             'pose_topic', '/missions/pose').value
+        self.map_topic = self.declare_parameter(
+            'map_topic', '/missions/map').value
+        # The map does not change while the robot runs, so it goes out once
+        # when it arrives and then only every map_period seconds, for the
+        # benefit of a browser that was opened afterwards. MQTT has no
+        # retained-by-default, and a web page that missed the single
+        # publication has no map and no way to ask for one.
+        self.map_period = float(
+            self.declare_parameter('map_period', 30.0).value)
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -110,6 +122,19 @@ class MqttMissionBridge(Node):
         self._connect_mqtt()
 
         self.create_timer(self.pose_period, self._publish_pose)
+
+        # Subscribed transient local, because map_server publishes /map once
+        # when it activates and latches it - a volatile subscriber connecting
+        # afterwards, which this always is, receives nothing at all.
+        from nav_msgs.msg import OccupancyGrid
+        from rclpy.qos import (DurabilityPolicy, QoSProfile, ReliabilityPolicy)
+        map_qos = QoSProfile(depth=1)
+        map_qos.reliability = ReliabilityPolicy.RELIABLE
+        map_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+        self.map_payload = None
+        self.create_subscription(
+            OccupancyGrid, '/map', self._on_map, map_qos)
+        self.create_timer(self.map_period, self._publish_map)
 
         self.get_logger().info(
             'mqtt_mission_bridge ready - broker %s:%d, goals go to Nav2, '
@@ -344,6 +369,64 @@ class MqttMissionBridge(Node):
                        'image': encoded})
         self.get_logger().info(
             'sent %s to the web (%d KB)' % (name, len(encoded) // 1024))
+
+    # --------------------------------------------------------------- map
+
+    def _on_map(self, msg):
+        """Turn the occupancy grid into a PNG the browser can draw.
+
+        The metadata travels with it and is not optional: resolution and
+        origin are what turn the x/y this node publishes into a pixel on that
+        image. A map without them is a picture, and the robot marker lands
+        somewhere arbitrary on it.
+
+        Row order is flipped. An OccupancyGrid's first row is the bottom of
+        the map in world terms, and every image format and every canvas draws
+        the first row at the top.
+        """
+        try:
+            import numpy as np
+            import cv2
+        except ImportError as exc:
+            self.get_logger().error('cannot encode the map: %s' % exc)
+            return
+
+        grid = np.array(msg.data, dtype=np.int16).reshape(
+            msg.info.height, msg.info.width)
+        image = np.full(grid.shape, 127, dtype=np.uint8)   # unknown
+        image[grid == 0] = 255                             # free
+        image[grid >= 50] = 0                              # occupied
+        image = np.flipud(image)
+
+        ok, buf = cv2.imencode('.png', image)
+        if not ok:
+            self.get_logger().error('PNG encoding failed')
+            return
+
+        origin = msg.info.origin
+        import math
+        q = origin.orientation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                         1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        self.map_payload = {
+            'width': msg.info.width,
+            'height': msg.info.height,
+            'resolution': msg.info.resolution,
+            'origin': {'x': origin.position.x, 'y': origin.position.y,
+                       'yaw': yaw},
+            'frame': msg.header.frame_id or self.frame,
+            'timestamp': int(time.time()),
+            'image': base64.b64encode(buf.tobytes()).decode('ascii'),
+        }
+        self.get_logger().info(
+            'map ready for the web: %dx%d at %.3f m/cell, %d KB PNG'
+            % (msg.info.width, msg.info.height, msg.info.resolution,
+               len(self.map_payload['image']) // 1024))
+        self._publish_map()
+
+    def _publish_map(self):
+        if self.map_payload is not None:
+            self._publish(self.map_topic, self.map_payload)
 
     # -------------------------------------------------------------- pose
 
