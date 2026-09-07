@@ -77,9 +77,19 @@ def parse_args():
                         help='Skip the periodic joystick-off, balance-stand and '
                              'gait commands the wheeled base needs before it '
                              'will accept Move.')
-    parser.add_argument('--gait', type=int, default=-1,
-                        help='api mode only. Gait to select on startup, or -1 '
-                             'to leave the gait alone.')
+    parser.add_argument('--gait', type=int, default=1,
+                        help='Gait to select on startup, or -1 to leave the '
+                             'gait alone. 1 is what go2w_cmd_vel_control uses '
+                             'on this robot; leaving the gait unset was one '
+                             'reason Move did almost nothing.')
+    parser.add_argument('--startup-repeats', type=int, default=5,
+                        help='How many times to send the stand-up, balance and '
+                             'joystick-off sequence before arming. Once is not '
+                             'reliably enough on a Go2W.')
+    parser.add_argument('--rate', type=float, default=20.0,
+                        help='Hz at which the last received command is resent '
+                             'to the robot. The robot needs a continuous Move '
+                             'stream; the UDP side arrives in bursts.')
     parser.add_argument('--ignore-api-check', action='store_true',
                         help='sdk mode only. Arm even when the API version '
                              'query does not answer. That query is a '
@@ -247,41 +257,57 @@ def run_sdk(args):
         version = 'unknown'
     print(f'armed: sdk mode, sport API {version}, udp port {args.port}', flush=True)
 
-    # The wheeled base takes one Move and then stops, however fast the commands
-    # keep arriving: measured on site 2026-09-07, it travelled for about a
-    # second under a fifteen second stream. It drops back to joystick control
-    # unless told otherwise, and one instruction at startup is not enough
-    # because the drop happens again afterwards. api mode already repeated
-    # these; sdk mode never did, which is the whole of the difference between
-    # a robot that walks and one that twitches.
+    # The startup sequence, repeated. go2w_cmd_vel_control - written for this
+    # robot - sends stand up, balance stand and a gait five times over rather
+    # than once, and a Go2W that has not been stood up and given a gait accepts
+    # Move and does almost nothing with it.
     if not args.no_prereqs:
-        try:
-            client.SwitchJoystick(False)
-            client.BalanceStand()
-            print('prereqs: joystick off, balance stand', flush=True)
-        except Exception as exc:                  # noqa: BLE001
-            print('prereqs failed (continuing): %s' % exc, flush=True)
+        for _ in range(args.startup_repeats):
+            try:
+                client.StandUp()
+                client.BalanceStand()
+                client.SwitchJoystick(False)
+            except Exception as exc:              # noqa: BLE001
+                print('prereqs failed (continuing): %s' % exc, flush=True)
+                break
+            time.sleep(0.1)
+        print('prereqs: stand up, balance stand, joystick off  (x%d)'
+              % args.startup_repeats, flush=True)
 
     sock = open_socket(args.port)
     stats = {'dropped': 0}
     last_rx = 0.0
+    last_tx = 0.0
+    held = None
     stopped = True
     sent = 0
+    period = 1.0 / max(1.0, args.rate)
     try:
         while True:
             command = read_command(sock, args, stats)
+            now = time.monotonic()
             if command is not None:
-                # Every two seconds at 10 Hz. Cheap next to the alternative,
-                # which is a robot that stops in the middle of a mission for a
-                # reason nothing reports.
-                if not args.no_prereqs and sent % 20 == 0:
-                    client.SwitchJoystick(False)
-                client.Move(*command)
-                sent += 1
-                last_rx = time.monotonic()
+                held = command
+                last_rx = now
+
+            # Hold the last command and keep sending it, rather than sending
+            # one Move per packet received. Measured on site 2026-09-07: the
+            # robot moved for about a second under a fifteen second stream and
+            # the bridge reported three separate timeouts, because the stream
+            # arrives in bursts and a gap of half a second was being read as
+            # "the operator let go". Nav2 publishes continuously, so this is
+            # also the shape the navigation path needs.
+            if held is not None and now - last_rx <= args.timeout:
+                if now - last_tx >= period:
+                    if not args.no_prereqs and sent % 20 == 0:
+                        client.SwitchJoystick(False)
+                    client.Move(*held)
+                    sent += 1
+                    last_tx = now
                 stopped = False
-            elif not stopped and time.monotonic() - last_rx > args.timeout:
+            elif not stopped:
                 client.StopMove()
+                held = None
                 stopped = True
                 print('timeout: stopped', flush=True)
     except KeyboardInterrupt:
@@ -321,29 +347,52 @@ def run_api(args):
     else:
         print(f'  {peers} subscriber(s) on the request topic', flush=True)
 
+    if not args.no_prereqs:
+        for _ in range(args.startup_repeats):
+            send(API_STAND_UP)
+            send(API_BALANCE_STAND)
+            send(API_SWITCH_JOYSTICK, '{"data":false}')
+            if args.gait >= 0:
+                send(API_SWITCH_GAIT, '{"data":%d}' % args.gait)
+            time.sleep(0.1)
+        print('prereqs: stand up, balance stand, joystick off, gait %d  (x%d)'
+              % (args.gait, args.startup_repeats), flush=True)
+
     sock = open_socket(args.port)
     stats = {'dropped': 0}
     last_rx = 0.0
+    last_tx = 0.0
+    held = None
     stopped = True
     sent = 0
+    period = 1.0 / max(1.0, args.rate)
     try:
         while True:
             command = read_command(sock, args, stats)
+            now = time.monotonic()
             if command is not None:
-                # The wheeled base drops back into joystick control unless it is
-                # told otherwise periodically, which is why go2w_cmd_vel_control
-                # repeats these rather than sending them once at startup.
-                if not args.no_prereqs and sent % 20 == 0:
-                    send(API_SWITCH_JOYSTICK, '{"data":false}')
-                    if args.gait >= 0:
-                        send(API_SWITCH_GAIT, '{"data":%d}' % args.gait)
-                x, y, z = command
-                send(API_MOVE, '{"x":%.6f,"y":%.6f,"z":%.6f}' % (x, y, z))
-                sent += 1
-                last_rx = time.monotonic()
+                held = command
+                last_rx = now
+
+            # Hold and resend, rather than one Move per packet - see run_sdk.
+            if held is not None and now - last_rx <= args.timeout:
+                if now - last_tx >= period:
+                    # The wheeled base drops back into joystick control unless
+                    # it is told otherwise periodically, which is why
+                    # go2w_cmd_vel_control repeats these rather than sending
+                    # them once at startup.
+                    if not args.no_prereqs and sent % 20 == 0:
+                        send(API_SWITCH_JOYSTICK, '{"data":false}')
+                        if args.gait >= 0:
+                            send(API_SWITCH_GAIT, '{"data":%d}' % args.gait)
+                    x, y, z = held
+                    send(API_MOVE, '{"x":%.6f,"y":%.6f,"z":%.6f}' % (x, y, z))
+                    sent += 1
+                    last_tx = now
                 stopped = False
-            elif not stopped and time.monotonic() - last_rx > args.timeout:
+            elif not stopped:
                 send(API_STOP_MOVE)
+                held = None
                 stopped = True
                 print('timeout: sent StopMove', flush=True)
     except KeyboardInterrupt:
