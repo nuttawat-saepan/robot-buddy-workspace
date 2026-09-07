@@ -209,10 +209,22 @@ class MqttMissionBridge(Node):
     # ----------------------------------------------------------- mission
 
     def _start_mission(self, data):
+        # Stop whatever is running before starting the next one, rather than
+        # refusing. A mission stopped from the web leaves this thread finishing
+        # its cancel, and a bare is_alive() check then rejected the very next
+        # mission the operator sent - so the web appeared to stop responding
+        # until someone waited long enough, with nothing saying why.
         if self.worker is not None and self.worker.is_alive():
-            self.get_logger().warn(
-                'a mission is already running - ignoring the new one')
-            return
+            self.get_logger().warn('a mission is running - stopping it first')
+            self.stopping = True
+            self.paused = False
+            self._cancel_current()
+            self.worker.join(timeout=10.0)
+            if self.worker.is_alive():
+                self.get_logger().error(
+                    'the previous mission did not stop within 10s - refusing '
+                    'the new one rather than running two at once')
+                return
 
         waypoints = sorted(data.get('waypoints', []),
                            key=lambda w: w.get('sequence', 0))
