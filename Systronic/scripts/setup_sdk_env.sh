@@ -30,14 +30,46 @@ WS="$(dirname "$HERE")"
 source /opt/ros/foxy/setup.bash
 [ -f "$WS/install/setup.bash" ] && source "$WS/install/setup.bash"
 
+# onsite.env holds the site's values, but a value already set in this shell
+# has to win over it - that is how you point one terminal at the cable while
+# the file says wireless, without editing the file and forgetting to put it
+# back. Without this the override is accepted silently and ignored, which is
+# the same failure the file itself was causing.
+_pre_UNITREE_IF="${UNITREE_IF:-}"
+_pre_ROBOT_IP="${ROBOT_IP:-}"
+
 if [ -f "$HERE/onsite.env" ]; then
     source "$HERE/onsite.env"
 else
     echo "warning: $HERE/onsite.env not found, using defaults"
 fi
 
+[ -n "$_pre_UNITREE_IF" ] && export UNITREE_IF="$_pre_UNITREE_IF"
+[ -n "$_pre_ROBOT_IP" ] && export ROBOT_IP="$_pre_ROBOT_IP"
+unset _pre_UNITREE_IF _pre_ROBOT_IP
+
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-export CYCLONEDDS_URI="file://$WS/src/go2_control/config/cyclonedds_unitree_wlan.xml"
+
+# Built here from UNITREE_IF rather than read from
+# config/cyclonedds_unitree_wlan.xml, which names wlp4s0 and peers
+# 192.168.68.70 in the file itself. Passing --interface enp3s0 to the bridge
+# while that file still bound the wireless card produced the worst failure
+# this stack has: the bridge arms, reports itself ready, and not one command
+# reaches the legs. The interface belongs in onsite.env with every other
+# machine-specific value, not baked into a config file.
+#
+# The legacy <NetworkInterfaceAddress> element is not a style choice. Foxy
+# ships CycloneDDS 0.7, which given the newer <Interfaces>/<NetworkInterface>
+# syntax creates no participant at all and reports nothing.
+#
+# The unicast peer matters on a network that drops or isolates multicast -
+# most site APs do. ROBOT_IP has to be the robot's address on the same subnet
+# as UNITREE_IF, or discovery has nowhere to go.
+export CYCLONEDDS_URI="<CycloneDDS><Domain id=\"any\"><General>
+    <NetworkInterfaceAddress>${UNITREE_IF:-eth0}</NetworkInterfaceAddress>
+</General><Discovery><Peers>
+    <Peer address=\"${ROBOT_IP:-192.168.123.161}\" />
+</Peers></Discovery></Domain></CycloneDDS>"
 
 # Unitree's own DDS traffic is on domain 0. Overrides whatever onsite.env set
 # for the rest of the stack, on purpose.
@@ -49,9 +81,18 @@ unset ROS_LOCALHOST_ONLY
 
 IFACE="${UNITREE_IF:-eth0}"
 
+if ! ip -o link show "$IFACE" > /dev/null 2>&1; then
+    echo
+    echo "WARNING: interface $IFACE does not exist on this machine."
+    echo "         CycloneDDS will create no participant and say nothing useful."
+    echo "         Cards here: $(ip -brief link show | awk '$1!="lo"{printf "%s ", $1}')"
+    echo "         Set UNITREE_IF in scripts/onsite.env to one of them."
+fi
+
 echo "Unitree SDK environment ready - THIS TERMINAL TALKS TO THE ROBOT"
 echo "  RMW              $RMW_IMPLEMENTATION"
-echo "  CYCLONEDDS_URI   $(basename "${CYCLONEDDS_URI#file://}")"
+echo "  bound to         ${UNITREE_IF:-eth0}   (UNITREE_IF, override it per terminal)"
+echo "  discovery peer   ${ROBOT_IP:-192.168.123.161}"
 echo "  ROS_DOMAIN_ID    $ROS_DOMAIN_ID   (Unitree's own domain, not the site's)"
 echo "  interface        $IFACE"
 echo
