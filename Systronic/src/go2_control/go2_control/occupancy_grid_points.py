@@ -18,6 +18,8 @@ class OccupancyGridPoints(Node):
         self.declare_parameter('publish_free', False)
         self.declare_parameter('stride', 1)
         self.declare_parameter('transient_local', False)
+        # Seconds between repeats of the last converted map. 0 disables.
+        self.declare_parameter('republish_period', 2.0)
 
         self.input_topic = self.get_parameter(
             'input_topic').get_parameter_value().string_value
@@ -53,8 +55,22 @@ class OccupancyGridPoints(Node):
         self.pub = self.create_publisher(PointCloud2, self.output_topic, out_qos)
         self.sub = self.create_subscription(
             OccupancyGrid, self.input_topic, self.on_grid, qos)
+        # Republish on a timer. map_server sends /map once and latches it, so
+        # this node converts it once and then falls silent - and anything that
+        # subscribes afterwards, which is every RViz ever opened, receives
+        # nothing at all. Re-sending the same cloud costs one message every two
+        # seconds and removes a failure that looks exactly like a broken map.
+        self.latest = None
+        self.create_timer(
+            float(self.get_parameter('republish_period').value),
+            self.republish)
+
         self.get_logger().info(
             f'{self.input_topic} -> {self.output_topic} as PointCloud2')
+
+    def republish(self):
+        if self.latest is not None:
+            self.pub.publish(self.latest)
 
     def on_grid(self, msg):
         info = msg.info
@@ -104,6 +120,7 @@ class OccupancyGridPoints(Node):
         cloud.row_step = cloud.point_step * cloud.width
         cloud.is_dense = True
         cloud.data = b''.join(struct.pack('<fff', *point) for point in points)
+        self.latest = cloud
         self.pub.publish(cloud)
 
 
