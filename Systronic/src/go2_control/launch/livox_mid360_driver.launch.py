@@ -15,8 +15,16 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     go2_share = get_package_share_directory('go2_control')
-    default_config = os.path.join(
-        go2_share, 'config', 'livox_mid360_field.example.json')
+    # Prefer the real field config over the example. The example names
+    # 192.168.1.100, which is nobody's address on the Livox subnet, and the
+    # driver's only complaint is "bind failed / Init lds lidar fail" - after
+    # which every topic downstream is silent and the failure reads as a dead
+    # sensor. livox_robot.launch.py never passed a path, so the example was
+    # what actually ran in the field.
+    field_config = os.path.join(
+        go2_share, 'config', 'livox_mid360_field.json')
+    default_config = field_config if os.path.exists(field_config) else \
+        os.path.join(go2_share, 'config', 'livox_mid360_field.example.json')
 
     user_config_path = LaunchConfiguration('user_config_path')
     frame_id = LaunchConfiguration('frame_id')
