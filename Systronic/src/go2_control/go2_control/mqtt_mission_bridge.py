@@ -364,8 +364,13 @@ class MqttMissionBridge(Node):
         q = tf.transform.rotation
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
                          1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        # Wall time, not the ROS clock: the web draws a marker and needs to
+        # know how old it is, and a stale pose that looks current is worse
+        # than a gap. The board's clock was 56 years out until today, which is
+        # exactly the failure this field makes visible.
         self._publish(self.pose_topic,
-                      {'x': t.x, 'y': t.y, 'yaw': yaw, 'frame': self.frame})
+                      {'x': t.x, 'y': t.y, 'yaw': yaw, 'frame': self.frame,
+                       'timestamp': int(time.time())})
 
 
 def main(argv=None):
