@@ -53,9 +53,13 @@ API_SWITCH_JOYSTICK = 1027
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Send velocity to a Unitree Go2/Go2W over one of two paths.')
-    parser.add_argument('--mode', choices=('api', 'sdk', 'probe'), default='api',
-                        help='api publishes unitree_api Request messages; sdk '
-                             'calls SportClient; probe reports and sends nothing.')
+    parser.add_argument('--mode', choices=('api', 'sdk', 'raw', 'probe'),
+                        default='api',
+                        help='api publishes unitree_api Request through rclpy; '
+                             'raw publishes the same message through the SDK\'s '
+                             'own CycloneDDS channel, with no ROS node at all; '
+                             'sdk calls SportClient; probe reports and sends '
+                             'nothing.')
     parser.add_argument('--robot-ack', default='',
                         help='Required for api and sdk. Not required for probe, '
                              'which cannot move the robot.')
@@ -204,6 +208,118 @@ def run_probe(args):
     print('    ros2 topic list | grep -E "api|sport|lf/"')
 
 
+# ----------------------------------------------------------------- raw mode
+
+def run_raw(args):
+    """Publish unitree_api Request without creating a ROS node.
+
+    api mode does the right thing and cannot run here. Creating any ROS node on
+    ROS_DOMAIN_ID 0 while the robot's graph is on the wire segfaults - measured
+    on 2026-09-07 on the MiniPC and the board, in rclpy and again in rclcpp
+    through go2w_cmd_vel_control, so it is the middleware and not one language's
+    binding. Foxy's rmw_cyclonedds cannot survive the robot's participant
+    announcements, which is the same wall Fast DDS hits as a flood of
+    std::bad_alloc.
+
+    The Unitree SDK does not go through rmw at all. It talks CycloneDDS
+    directly and ships the Request IDL, so the message api mode wanted to send
+    can be sent without any of the machinery that crashes.
+
+    This is also the one path never tried on this robot. sdk mode reaches the
+    sport *service*, which answers its version query and then does not drive
+    the wheels. This publishes to the request *topic*, which is what
+    go2w_cmd_vel_control - written for this robot - does.
+    """
+    from unitree_sdk2py.core.channel import (ChannelFactoryInitialize,
+                                             ChannelPublisher)
+    from unitree_sdk2py.idl.unitree_api.msg.dds_ import Request_
+
+    ChannelFactoryInitialize(0, args.interface)
+    # The SDK speaks raw DDS names. ROS prefixes its topics with "rt/", so the
+    # topic ROS calls /api/sport/request is rt/api/sport/request on the wire.
+    topic = 'rt' + args.request_topic
+    pub = ChannelPublisher(topic, Request_)
+    pub.Init()
+
+    def send(api_id, parameter=''):
+        request = Request_()
+        request.header.identity.api_id = api_id
+        request.parameter = parameter
+        pub.Write(request)
+
+    print(f'armed: raw mode, dds topic {topic}, udp port {args.port}',
+          flush=True)
+
+    if not args.no_prereqs:
+        for _ in range(args.startup_repeats):
+            send(API_STAND_UP)
+            send(API_BALANCE_STAND)
+            send(API_SWITCH_JOYSTICK, '{"data":false}')
+            if args.gait >= 0:
+                send(API_SWITCH_GAIT, '{"data":%d}' % args.gait)
+            time.sleep(0.1)
+        print('prereqs: stand up, balance stand, joystick off, gait %d  (x%d)'
+              % (args.gait, args.startup_repeats), flush=True)
+
+    pump(args, send_move=lambda x, y, z:
+         send(API_MOVE, '{"x":%.6f,"y":%.6f,"z":%.6f}' % (x, y, z)),
+         send_stop=lambda: send(API_STOP_MOVE),
+         keepalive=lambda: send(API_SWITCH_JOYSTICK, '{"data":false}')
+         if not args.no_prereqs else None)
+
+
+def pump(args, send_move, send_stop, keepalive=None):
+    """Read UDP, hold the last command, and resend it at a steady rate.
+
+    Shared by every mode that actually drives, so a fix to the timing story
+    cannot land in one path and be missed in another.
+    """
+    sock = open_socket(args.port)
+    stats = {'dropped': 0}
+    last_rx = last_tx = 0.0
+    report_at = time.monotonic()
+    held = None
+    stopped = True
+    sent = rx_count = tx_count = 0
+    period = 1.0 / max(1.0, args.rate)
+    try:
+        while True:
+            command = read_command(sock, args, stats)
+            now = time.monotonic()
+            if command is not None:
+                held = command
+                rx_count += 1
+                last_rx = now
+
+            if now - report_at >= 1.0:
+                print('  rx %3d/s   move %3d/s   held %s'
+                      % (rx_count, tx_count,
+                         'none' if held is None
+                         else '%.2f %.2f %.2f' % held), flush=True)
+                rx_count = tx_count = 0
+                report_at = now
+
+            if held is not None and now - last_rx <= args.timeout:
+                if now - last_tx >= period:
+                    if keepalive is not None and sent % 20 == 0:
+                        keepalive()
+                    send_move(*held)
+                    sent += 1
+                    tx_count += 1
+                    last_tx = now
+                stopped = False
+            elif not stopped:
+                send_stop()
+                held = None
+                stopped = True
+                print('timeout: stopped', flush=True)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        send_stop()
+        time.sleep(0.1)
+
+
 # ----------------------------------------------------------------- sdk mode
 
 def query_sport_api(client, attempts=5, timeout=3.0):
@@ -281,6 +397,9 @@ def run_sdk(args):
     held = None
     stopped = True
     sent = 0
+    rx_count = 0
+    tx_count = 0
+    report_at = time.monotonic()
     period = 1.0 / max(1.0, args.rate)
     try:
         while True:
@@ -288,7 +407,21 @@ def run_sdk(args):
             now = time.monotonic()
             if command is not None:
                 held = command
+                rx_count += 1
                 last_rx = now
+
+            # One line a second, because without it this process is a black
+            # box: it prints when it arms and when it times out and nothing in
+            # between, so "the robot moved for a second and stopped" could not
+            # be told apart from "the commands stopped arriving". Counting both
+            # sides makes that a reading rather than a guess.
+            if now - report_at >= 1.0:
+                print('  rx %3d/s   move %3d/s   held %s'
+                      % (rx_count, tx_count,
+                         'none' if held is None
+                         else '%.2f %.2f %.2f' % held), flush=True)
+                rx_count = tx_count = 0
+                report_at = now
 
             # Hold the last command and keep sending it, rather than sending
             # one Move per packet received. Measured on site 2026-09-07: the
@@ -303,6 +436,7 @@ def run_sdk(args):
                         client.SwitchJoystick(False)
                     client.Move(*held)
                     sent += 1
+                    tx_count += 1
                     last_tx = now
                 stopped = False
             elif not stopped:
@@ -481,6 +615,8 @@ def run(args):
             'Use --mode probe to check the link without arming anything.')
     if args.mode == 'api':
         run_api(args)
+    elif args.mode == 'raw':
+        run_raw(args)
     else:
         run_sdk(args)
 
