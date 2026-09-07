@@ -80,6 +80,12 @@ def parse_args():
     parser.add_argument('--gait', type=int, default=-1,
                         help='api mode only. Gait to select on startup, or -1 '
                              'to leave the gait alone.')
+    parser.add_argument('--ignore-api-check', action='store_true',
+                        help='sdk mode only. Arm even when the API version '
+                             'query does not answer. That query is a '
+                             'diagnostic, not the command path, and it has '
+                             'failed on machines where probe answered minutes '
+                             'earlier.')
     parser.add_argument('--transcript', default='auto',
                         help="Where to copy everything this prints. 'auto' "
                              'writes ~/go2_logs/bridge_<stamp>.log, a path '
@@ -137,9 +143,9 @@ def run_probe(args):
         from unitree_sdk2py.go2.sport.sport_client import SportClient
         ChannelFactoryInitialize(0, args.interface)
         client = SportClient()
-        client.SetTimeout(1.0)
+        client.SetTimeout(3.0)
         client.Init()
-        code, version = client.GetServerApiVersion()
+        code, version = query_sport_api(client)
         if code == 0:
             print(f'  sport service answered, API version {version}')
             print('  --mode sdk should work')
@@ -190,19 +196,55 @@ def run_probe(args):
 
 # ----------------------------------------------------------------- sdk mode
 
+def query_sport_api(client, attempts=5, timeout=3.0):
+    """Ask for the API version, more than once.
+
+    The same three lines - ChannelFactoryInitialize, Init, GetServerApiVersion
+    - answered under --mode probe and returned 3102 under --mode sdk, on two
+    different machines, minutes apart, from identical code. The difference is
+    not in the code. One query with a one second timeout is a race against
+    discovery, and 3102 means only that the request never went out. Asking once
+    and treating the answer as a fact about the robot was the mistake: it is a
+    fact about that second.
+
+    Retrying costs a few seconds at startup and removes a failure that has
+    already sent a field session hunting for a service-name problem that may
+    not exist.
+    """
+    code, version = -1, None
+    for attempt in range(1, attempts + 1):
+        client.SetTimeout(timeout)
+        code, version = client.GetServerApiVersion()
+        if code == 0:
+            if attempt > 1:
+                print('  answered on attempt %d of %d' % (attempt, attempts),
+                      flush=True)
+            return code, version
+        print('  attempt %d/%d: code %s' % (attempt, attempts, code), flush=True)
+        time.sleep(1.0)
+    return code, version
+
+
 def run_sdk(args):
     from unitree_sdk2py.core.channel import ChannelFactoryInitialize
     from unitree_sdk2py.go2.sport.sport_client import SportClient
 
     ChannelFactoryInitialize(0, args.interface)
     client = SportClient()
-    client.SetTimeout(1.0)
+    client.SetTimeout(3.0)
     client.Init()
-    code, version = client.GetServerApiVersion()
-    if code != 0:
+    code, version = query_sport_api(client)
+    if code != 0 and not args.ignore_api_check:
         raise SystemExit(
-            f'Unitree sport API unavailable: {code}. On a Go2W this is expected - '
-            f'the service is named wheeled_sport, not sport. Use --mode api.')
+            f'Unitree sport API did not answer after several tries, last code '
+            f'{code}. On a Go2W this can mean the service is named '
+            f'wheeled_sport rather than sport - use --mode api. But if probe '
+            f'answered on this machine, it is the version query that is '
+            f'unreliable and not the link: --ignore-api-check arms anyway and '
+            f'sends Move, which is the call that matters.')
+    if code != 0:
+        print(f'--ignore-api-check: arming despite code {code}', flush=True)
+        version = 'unknown'
     print(f'armed: sdk mode, sport API {version}, udp port {args.port}', flush=True)
 
     sock = open_socket(args.port)
