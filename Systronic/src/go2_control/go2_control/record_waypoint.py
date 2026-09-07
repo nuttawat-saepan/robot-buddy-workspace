@@ -26,6 +26,7 @@ import json
 import math
 import os
 import sys
+import time
 
 import rclpy
 from rclpy.node import Node
@@ -55,8 +56,19 @@ class WaypointRecorder(Node):
                   f'new ones are appended')
 
     def pose_now(self):
+        # Drain the TF buffer before asking. This node spends nearly all of its
+        # life blocked on input() while the operator walks the robot to the next
+        # point, and nothing spins during that time - so the buffer holds
+        # whatever arrived before the last prompt. tf2 then reports a lookup
+        # "at time X, but only time Y is in the buffer", which reads as a broken
+        # transform when the transform is fine and simply unread.
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.05)
+
         tf = self.buffer.lookup_transform(
-            self.map_frame, self.base_frame, rclpy.time.Time())
+            self.map_frame, self.base_frame, rclpy.time.Time(),
+            timeout=rclpy.duration.Duration(seconds=1.0))
         t = tf.transform.translation
         return t.x, t.y, yaw_of(tf.transform.rotation)
 
