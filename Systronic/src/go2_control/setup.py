@@ -128,6 +128,7 @@ setup(
         'send_mission = go2_control.send_mission:main',
         'mission_capture = go2_control.mission_capture:main',
         'occupancy_grid_points = go2_control.occupancy_grid_points:main',
+        'mqtt_mission_bridge = go2_control.mqtt_mission_bridge:main',
         'record_waypoint = go2_control.record_waypoint:main',
         'unitree_udp_bridge = go2_control.unitree_udp_bridge:main',
         'go2w_read = go2_control.go2w_read:main',
