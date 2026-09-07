@@ -33,12 +33,24 @@ class OccupancyGridPoints(Node):
         transient_local = self.get_parameter(
             'transient_local').get_parameter_value().bool_value
 
+        # The subscription is always transient local, whatever the parameter
+        # says. map_server publishes /map exactly once, when it activates, and
+        # latches it - so a volatile subscriber that connects at any point
+        # afterwards receives nothing and waits forever. This node is started
+        # after map_server every time, which made it silent every time.
+        #
+        # The parameter now governs the outgoing side only, which is what it
+        # was for: RViz across two machines is the reason this node exists, and
+        # a transient local publisher is what does not survive that hop.
         qos = QoSProfile(depth=1)
         qos.reliability = ReliabilityPolicy.RELIABLE
-        if transient_local:
-            qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+        qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
 
-        self.pub = self.create_publisher(PointCloud2, self.output_topic, 1)
+        out_qos = QoSProfile(depth=1)
+        out_qos.reliability = ReliabilityPolicy.RELIABLE
+        if transient_local:
+            out_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+        self.pub = self.create_publisher(PointCloud2, self.output_topic, out_qos)
         self.sub = self.create_subscription(
             OccupancyGrid, self.input_topic, self.on_grid, qos)
         self.get_logger().info(
