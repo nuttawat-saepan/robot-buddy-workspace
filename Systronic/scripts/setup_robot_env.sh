@@ -37,9 +37,18 @@ fi
 #
 # 0.7 takes a single interface here, not a list. Naming two is the same error.
 export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
-export CYCLONEDDS_URI="<CycloneDDS><Domain><General>
+#
+# The unicast peer is not optional. Most site APs drop or isolate multicast,
+# and CycloneDDS discovery is multicast by default - so without naming the
+# other machine explicitly the two never find each other however correct
+# everything else is. Measured on site 2026-09-07: with both ends on domain 43
+# and the same interface syntax, the ground station received nothing at all
+# from the board until the peers were named on both sides.
+export CYCLONEDDS_URI="<CycloneDDS><Domain id=\"any\"><General>
     <NetworkInterfaceAddress>${ROBOT_NET_IF:-wlan0}</NetworkInterfaceAddress>
-</General></Domain></CycloneDDS>"
+</General><Discovery><Peers>
+    <Peer address=\"${GROUND_IP:-192.168.80.212}\" />
+</Peers></Discovery></Domain></CycloneDDS>"
 
 # CycloneDDS fails to create a participant at all if the named interface does
 # not exist on this machine, and the traceback that follows blames rclpy rather
