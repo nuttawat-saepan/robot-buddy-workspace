@@ -29,7 +29,14 @@ hdr()  { printf '\n== %s\n' "$1"; }
 # A topic can be silent for two quite different reasons and only one of them is
 # visible in the topic list, so both are always checked together.
 pub_count() { timeout 6 ros2 topic info "$1" 2>/dev/null | awk '/Publisher count/{print $NF}'; }
-has_data()  { timeout 6 ros2 topic hz "$1" 2>/dev/null | grep -qm1 'average rate'; }
+
+# Not `ros2 topic hz`: on Foxy it takes no QoS options, subscribes reliable,
+# and so matches nothing on /livox/lidar, /scan, /Odometry or /particlecloud -
+# every one of which publishes best effort. It then reports silence for a topic
+# carrying data at 10 Hz, which is indistinguishable from a dead sensor. This
+# script exists to tell those two apart, so it cannot use a check that cannot.
+has_data()  { timeout 6 ros2 topic echo "$1" --qos-profile sensor_data \
+                  2>/dev/null | grep -qm1 '^---'; }
 
 check_topic() {
     local topic="$1" why="$2" pubs
