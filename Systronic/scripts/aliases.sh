@@ -28,12 +28,12 @@ alias go2ready='ros2 run go2_control nav_ready_check --ros-args -p controller_cm
 alias go2tf='ros2 run tf2_ros tf2_echo map odom'
 alias go2tf2='ros2 run tf2_ros tf2_echo odom ${GO2_BASE_FRAME:-base_link}'
 alias go2life='for n in /map_server /amcl /planner_server /controller_server /bt_navigator; do printf "%-22s " $n; ros2 lifecycle get $n 2>&1 | head -1; done'
-# `ros2 topic hz` on Foxy takes no QoS options, so it subscribes reliable and
-# matches nothing on /livox/lidar, /scan or /Odometry - every one of which
-# publishes best effort. It then reports "silent" for topics carrying data at
-# 10 Hz, which is the same word it uses for a dead sensor. Counting messages
-# out of `echo --qos-profile sensor_data` is uglier and tells the truth.
-alias go2hz='for t in /livox/lidar /scan /Odometry /map; do printf "%-16s " $t; n=$(timeout 4 ros2 topic echo "$t" --qos-profile sensor_data 2>/dev/null | grep -c "^---"); if [ "$n" -gt 0 ]; then echo "~$((n / 4)) Hz  ($n msgs in 4s)"; else echo "silent"; fi; done'
+# Neither `ros2 topic hz` nor `ros2 topic echo` can answer this on Foxy - the
+# first subscribes reliable and matches nothing best-effort, the second prints
+# every point of every cloud and finishes no message inside a timeout. Both
+# then say "silent", which is the word a dead sensor gets. topic_rate.py
+# subscribes with sensor QoS and counts without deserializing.
+alias go2hz='for t in /livox/lidar /scan /Odometry /map; do $_GO2_WS/scripts/topic_rate.py "$t" 4; done'
 
 # --- the safety check, run it before every goal ----------------------------
 # /cmd_vel having no publisher is the standing proof that a run cannot move the

@@ -18,6 +18,8 @@
 
 set -uo pipefail
 
+WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 FIRST_BREAK=""
 note() { printf '  %s\n' "$*"; }
 ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
@@ -30,13 +32,13 @@ hdr()  { printf '\n== %s\n' "$1"; }
 # visible in the topic list, so both are always checked together.
 pub_count() { timeout 6 ros2 topic info "$1" 2>/dev/null | awk '/Publisher count/{print $NF}'; }
 
-# Not `ros2 topic hz`: on Foxy it takes no QoS options, subscribes reliable,
-# and so matches nothing on /livox/lidar, /scan, /Odometry or /particlecloud -
-# every one of which publishes best effort. It then reports silence for a topic
-# carrying data at 10 Hz, which is indistinguishable from a dead sensor. This
-# script exists to tell those two apart, so it cannot use a check that cannot.
-has_data()  { timeout 6 ros2 topic echo "$1" --qos-profile sensor_data \
-                  2>/dev/null | grep -qm1 '^---'; }
+# Not `ros2 topic hz` and not `ros2 topic echo`: on Foxy the first takes no QoS
+# options and so matches nothing best-effort, while the second deserializes and
+# prints every point of every cloud and completes no message inside a timeout.
+# Both report silence for a topic running at 10 Hz - measured against a map
+# visibly growing in RViz - which is the same word a dead sensor gets, and
+# telling those apart is the whole purpose of this script.
+has_data()  { timeout 12 "$WS/scripts/topic_rate.py" "$1" 3 > /dev/null 2>&1; }
 
 check_topic() {
     local topic="$1" why="$2" pubs
@@ -117,12 +119,12 @@ check_topic /Odometry    "FAST-LIO is not running"
 check_topic /scan        "/scan is projected from FAST-LIO's cloud, not from raw lidar"
 
 hdr "the two transforms Nav2 needs"
-if timeout 6 ros2 run tf2_ros tf2_echo odom "${GO2_BASE_FRAME:-base_link}" 2>&1 | grep -q Translation; then
+if timeout 12 ros2 run tf2_ros tf2_echo odom "${GO2_BASE_FRAME:-base_link}" 2>&1 | grep -q Translation; then
     ok "odom -> ${GO2_BASE_FRAME:-base_link}  (lio_odom_relay)"
 else
     bad "odom -> ${GO2_BASE_FRAME:-base_link} missing - lio_odom_relay is not publishing"
 fi
-if timeout 6 ros2 run tf2_ros tf2_echo map odom 2>&1 | grep -q Translation; then
+if timeout 12 ros2 run tf2_ros tf2_echo map odom 2>&1 | grep -q Translation; then
     ok "map -> odom  (amcl)"
 else
     bad "map -> odom missing - amcl is not running, or died at startup"
