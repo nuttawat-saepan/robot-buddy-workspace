@@ -74,7 +74,7 @@ def parse_args():
     parser.add_argument('--max-linear', type=float, default=0.05)
     parser.add_argument('--max-angular', type=float, default=0.20)
     parser.add_argument('--no-prereqs', action='store_true',
-                        help='api mode only. Skip the periodic joystick-off and '
+                        help='Skip the periodic joystick-off, balance-stand and '
                              'gait commands the wheeled base needs before it '
                              'will accept Move.')
     parser.add_argument('--gait', type=int, default=-1,
@@ -247,25 +247,47 @@ def run_sdk(args):
         version = 'unknown'
     print(f'armed: sdk mode, sport API {version}, udp port {args.port}', flush=True)
 
+    # The wheeled base takes one Move and then stops, however fast the commands
+    # keep arriving: measured on site 2026-09-07, it travelled for about a
+    # second under a fifteen second stream. It drops back to joystick control
+    # unless told otherwise, and one instruction at startup is not enough
+    # because the drop happens again afterwards. api mode already repeated
+    # these; sdk mode never did, which is the whole of the difference between
+    # a robot that walks and one that twitches.
+    if not args.no_prereqs:
+        try:
+            client.SwitchJoystick(False)
+            client.BalanceStand()
+            print('prereqs: joystick off, balance stand', flush=True)
+        except Exception as exc:                  # noqa: BLE001
+            print('prereqs failed (continuing): %s' % exc, flush=True)
+
     sock = open_socket(args.port)
     stats = {'dropped': 0}
     last_rx = 0.0
     stopped = True
+    sent = 0
     try:
         while True:
             command = read_command(sock, args, stats)
             if command is not None:
+                # Every two seconds at 10 Hz. Cheap next to the alternative,
+                # which is a robot that stops in the middle of a mission for a
+                # reason nothing reports.
+                if not args.no_prereqs and sent % 20 == 0:
+                    client.SwitchJoystick(False)
                 client.Move(*command)
+                sent += 1
                 last_rx = time.monotonic()
                 stopped = False
             elif not stopped and time.monotonic() - last_rx > args.timeout:
-                client.Move(0.0, 0.0, 0.0)
+                client.StopMove()
                 stopped = True
                 print('timeout: stopped', flush=True)
     except KeyboardInterrupt:
         pass
     finally:
-        client.Move(0.0, 0.0, 0.0)
+        client.StopMove()
 
 
 # ----------------------------------------------------------------- api mode
