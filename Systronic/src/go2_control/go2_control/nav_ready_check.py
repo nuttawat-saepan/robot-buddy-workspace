@@ -140,8 +140,27 @@ class NavReadyCheck(Node):
         ok = True
 
         if self.spread is None:
-            ok = False
-            lines.append(('particle spread', 'FAIL', 'no /particlecloud yet'))
+            # AMCL publishes /particlecloud when it updates, and it does not
+            # update below update_min_d - so a robot standing still produces
+            # none, however well localised it is. Failing on that made this a
+            # trap with no way out: the check refused every goal, and the goal
+            # was the thing that would have moved the robot. If map -> odom is
+            # being published then AMCL is alive and has a pose; what is
+            # missing is the measurement, not the localisation. Say so, and
+            # let the operator decide.
+            good, _ = self.has_tf(self.map_frame, self.odom_frame)
+            if good:
+                lines.append(('particle spread', 'WARN',
+                              'no /particlecloud yet - AMCL publishes it only '
+                              'when it updates, and it does not update until '
+                              'the robot has moved about 0.2 m. map->odom is '
+                              'present, so localisation is running; the spread '
+                              'is unmeasured, not bad.'))
+            else:
+                ok = False
+                lines.append(('particle spread', 'FAIL',
+                              'no /particlecloud and no map->odom - AMCL is '
+                              'not localising'))
         elif self.spread <= SPREAD_LIMIT_M:
             lines.append(('particle spread', 'PASS',
                           f'{self.spread:.3f} m over {self.particles} particles'))
