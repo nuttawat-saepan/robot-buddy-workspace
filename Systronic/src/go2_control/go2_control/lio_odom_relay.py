@@ -96,6 +96,7 @@ class LioOdomRelay(Node):
         self.vx = self.vy = self.wz = 0.0
         self.published = 0
         self.lookup_failures = 0
+        self.stamp_misses = 0
         self.last_failure = ''
         self.create_timer(5.0, self.report)
 
@@ -110,9 +111,25 @@ class LioOdomRelay(Node):
             tf = self.tf_buffer.lookup_transform(
                 self.odom_frame, self.base_frame, Time.from_msg(stamp))
         except TransformException as exc:
-            self.lookup_failures += 1
-            self.last_failure = str(exc)
-            return
+            # FAST-LIO publishes the transform a moment after the odometry
+            # message it belongs to, so asking for that exact stamp fails most
+            # of the time. Dropping the message was costing 78% of them:
+            # measured on site 2026-09-07, /Odometry ran at 7.5 Hz and /odom
+            # came out at 1.7. sensor_watchdog then saw gaps longer than its
+            # 0.5 s timeout, blocked 106 commands out of 217, and the robot
+            # shuffled in place - a velocity, then a zero, then a velocity.
+            #
+            # The latest transform is a few milliseconds stale. That is a far
+            # smaller error than not publishing at all, and the alternative was
+            # a robot that could not be driven.
+            try:
+                tf = self.tf_buffer.lookup_transform(
+                    self.odom_frame, self.base_frame, Time())
+                self.stamp_misses += 1
+            except TransformException:
+                self.lookup_failures += 1
+                self.last_failure = str(exc)
+                return
 
         t = stamp.sec + stamp.nanosec * 1e-9
         x = tf.transform.translation.x
@@ -174,7 +191,8 @@ class LioOdomRelay(Node):
         else:
             self.get_logger().info(
                 f'{self.published} published, {self.lookup_failures} TF '
-                f'failures, v=({self.vx:+.2f}, {self.vy:+.2f}) m/s '
+                f'failures, {self.stamp_misses} served from the latest '
+                f'transform, v=({self.vx:+.2f}, {self.vy:+.2f}) m/s '
                 f'w={self.wz:+.2f} rad/s')
 
 
