@@ -1,262 +1,239 @@
-# What Can Be Tuned, What It Does, And How To Test It
+# ปรับอะไรได้บ้าง ปรับแล้วเกิดอะไร และจะเทสยังไง
 
-Written 2026-09-10, from the configuration as it stands after the field day of
-2026-09-07. Every value quoted here was read out of the running system or the
-committed config, not remembered.
+เขียน 2026-09-10 จากค่าที่ใช้อยู่จริงหลังลงหน้างานวันที่ 2026-09-07
+ทุกตัวเลขในเอกสารนี้อ่านมาจากระบบที่กำลังรันหรือจาก config ที่ commit ไว้
+ไม่ได้เขียนจากความจำ
 
-## 1. Why low obstacles do not appear
+## 1. ทำไมสิ่งกีดขวางเตี้ยไม่ขึ้น
 
-`pc2scan_livox_lio.yaml` cuts a horizontal slab out of the point cloud and
-throws the rest away:
+`pc2scan_livox_lio.yaml` ตัดแผ่นแนวนอนออกมาจาก point cloud แล้วทิ้งที่เหลือ
 
 ```text
-min_height: 0.25     metres above the floor
+min_height: 0.25     เมตร วัดจากพื้น
 max_height: 1.05
 ```
 
-**Anything lower than 25 cm above the floor is not in `/scan` at all**, so the
-costmap never learns about it and Nav2 will drive into it. A pallet edge, a
-cable tray, a step, a dog: invisible.
+**อะไรที่ต่ำกว่า 25 ซม. จากพื้นไม่อยู่ใน `/scan` เลย** costmap จึงไม่มีวันรู้จัก
+และ Nav2 จะเดินชน — ขอบพาเลท รางสายไฟ ขั้นบันได หรือหมา มองไม่เห็นทั้งหมด
 
-The 0.25 is not arbitrary. `pcd_to_map` rasterised the map from the same band,
-and AMCL correlates the live scan against that map - so cutting the scan at a
-different height compares two different slices of the room and localisation
-gets worse. **Lowering min_height without rebuilding the map trades navigation
-safety for localisation accuracy.** They are the same parameter pulling in two
-directions, which is why it should not be nudged casually.
+ค่า 0.25 ไม่ได้ตั้งมั่ว `pcd_to_map` แรสเตอร์แมพจากช่วงความสูงเดียวกันนี้
+และ AMCL เอาสแกนสดไปเทียบกับแมพนั้น ถ้าตัดสแกนคนละความสูงก็เท่ากับเทียบห้อง
+คนละชั้นกัน แล้ว localisation จะแย่ลง **ลด min_height โดยไม่ทำแมพใหม่
+คือแลกความแม่นของ localisation กับความปลอดภัยในการเดิน** ตัวแปรเดียวกันดึงกัน
+สองทาง จึงไม่ควรขยับเล่น ๆ
 
-There is a second floor beneath it. The Mid-360 sees 7 degrees below level, the
-mount adds 13, so the lowest ray leaves at about 20 degrees below horizontal
-from 0.43 m up: the floor within roughly 1.2 m of the robot is never seen from
-where the robot stands, whatever min_height says.
+ยังมีข้อจำกัดอีกชั้นที่อยู่ต่ำกว่านั้น Mid-360 มองต่ำกว่าแนวระดับได้ 7 องศา
+บวกมุมก้มของตัวยึดอีก 13 องศา ลำแสงต่ำสุดจึงลงล่างราว 20 องศาจากความสูง
+0.43 ม. แปลว่า **พื้นในรัศมีราว 1.2 ม. รอบตัวหุ่นไม่เคยถูกมองเห็นจากจุดที่หุ่นยืน**
+ไม่ว่า min_height จะเป็นเท่าไหร่
 
-If low obstacles have to be seen, the honest fix is a second projection - a
-separate `pointcloud_to_laserscan` with `min_height: 0.05`, published on
-`/scan_low`, added to the local costmap as an extra observation source and not
-given to AMCL. That keeps localisation on the band the map was built from and
-lets the costmap see the floor. It is about twenty lines of launch file.
+ถ้าจำเป็นต้องเห็นของเตี้ย ทางแก้ที่ตรงไปตรงมาคือทำ projection ตัวที่สอง —
+`pointcloud_to_laserscan` อีกตัวที่ `min_height: 0.05` ส่งออกเป็น `/scan_low`
+แล้วเพิ่มเข้า local costmap เป็น observation source อีกตัว **โดยไม่ให้ AMCL**
+วิธีนี้ localisation ยังอยู่บนช่วงความสูงที่ทำแมพไว้ ส่วน costmap เห็นพื้น
+เป็นงานประมาณยี่สิบบรรทัดใน launch file
 
-## 2. Running it without six terminals
+## 2. ทำยังไงให้ไม่ต้องเปิดหกเทอร์มินัล
 
-Today it takes six: sensors, Nav2, map republisher, MQTT bridge, relay, and
-the Unitree bridge - on the board, each needing four `source` lines, plus RViz
-on the ground station.
+ตอนนี้ใช้หกเทอร์มินัล — เซนเซอร์, Nav2, ตัวแปลงแมพ, MQTT bridge, relay
+และ Unitree bridge ทั้งหมดอยู่บนบอร์ด แต่ละอันต้อง source สี่บรรทัด
+บวก RViz บน ground station อีกหนึ่ง
 
-Three ways out, in increasing order of effort:
+มีสามทาง เรียงตามความยากจากน้อยไปมาก
 
-**A single launch file** that starts everything except the Unitree bridge.
-Nav2, the sensors and the map republisher are already launch files and can be
-included; `cmd_vel_udp_relay` and `mqtt_mission_bridge` are one `Node` each.
-The Unitree bridge stays out on purpose - it is the one process that can move
-the robot, and it should keep needing a deliberate command with the gate
-phrase in it.
+**launch file เดียว** ที่เปิดทุกอย่างยกเว้น Unitree bridge — Nav2, เซนเซอร์
+และตัวแปลงแมพเป็น launch file อยู่แล้ว include เข้ามาได้ ส่วน `cmd_vel_udp_relay`
+กับ `mqtt_mission_bridge` เป็น `Node` อย่างละตัว **Unitree bridge ต้องอยู่นอก
+โดยเจตนา** เพราะเป็นโปรเซสเดียวที่ทำให้หุ่นเคลื่อนที่ได้ และควรต้องพิมพ์คำสั่ง
+ที่มีวลีปลดล็อกอยู่ในนั้นเสมอ
 
-**A systemd unit** for what should survive a reboot. The board has no RTC and
-comes up in 1970; a unit that waits for the clock and then starts the stack
-would remove most of a morning's setup.
+**systemd unit** สำหรับสิ่งที่ควรรอดจากการรีบูต บอร์ดไม่มีแบต RTC และบูตมาที่ปี
+1970 ทุกครั้ง unit ที่รอให้นาฬิกาถูกก่อนแล้วค่อยสตาร์ตสแตกจะตัดงานตอนเช้าออกไปได้
+เกือบหมด
 
-**tmux** for a human who wants to watch all of it. `tmux new-session -d` with
-one window per process, then attach. Everything stays visible and one detach
-survives an ssh drop - which cost several restarts on 2026-09-07.
+**tmux** สำหรับคนที่อยากเห็นทุกอันพร้อมกัน `tmux new-session -d` หนึ่งหน้าต่าง
+ต่อหนึ่งโปรเซส แล้วค่อย attach ทุกอย่างยังมองเห็นได้และการ detach หนึ่งครั้ง
+ทนต่อ ssh หลุด ซึ่งเป็นเหตุให้ต้องรีสตาร์ทหลายรอบเมื่อวันที่ 7
 
-The single launch file is the right first step, because it also fixes the
-ordering problem: Nav2's `controller_server` fails to activate if the sensors
-are not already publishing TF, which happened repeatedly on site. A launch file
-can sequence that; six terminals rely on the operator remembering.
+**launch file เดียวคือขั้นแรกที่ถูกต้อง** เพราะมันแก้ปัญหาลำดับไปด้วย —
+`controller_server` ของ Nav2 activate ไม่ผ่านถ้าเซนเซอร์ยังไม่ส่ง TF
+ซึ่งเกิดซ้ำหลายรอบหน้างาน launch file จัดลำดับให้ได้ แต่หกเทอร์มินัลต้องอาศัย
+ให้คนจำเอง
 
-## 3. Debugging when it goes wrong
+## 3. เวลามีปัญหา จะหาสาเหตุยังไงให้ง่าย
 
-`go2doctor` already walks the chain and reports the first break. What is
-missing is that it only runs where you type it, and on site the interesting
-machine is the other one.
+`go2doctor` ไล่ทั้งสายและบอกจุดแรกที่พังอยู่แล้ว ที่ยังขาดคือมันรันได้เฉพาะ
+เครื่องที่พิมพ์ ส่วนหน้างานเครื่องที่น่าสนใจคืออีกเครื่อง
 
-Worth adding, in order of value:
+ที่ควรเพิ่ม เรียงตามคุณค่า
 
-- **`go2doctor --remote`**, running the same checks over ssh on the board and
-  printing them here.
-- **A heartbeat on MQTT**: the bridge already publishes pose every second; a
-  `/missions/health` alongside it carrying the same PASS/FAIL lines would put
-  the diagnosis on the web page where the operator is already looking.
-- **`collect_logs.sh` on both machines in one command.**
+- **`go2doctor --remote`** รันชุดตรวจเดียวกันผ่าน ssh บนบอร์ดแล้วพิมพ์ผลที่นี่
+- **heartbeat บน MQTT** — bridge ส่งตำแหน่งทุกวินาทีอยู่แล้ว เพิ่ม
+  `/missions/health` ที่มีบรรทัด PASS/FAIL ชุดเดียวกันไปด้วย จะได้เห็นการวินิจฉัย
+  บนหน้าเว็บที่ผู้ใช้มองอยู่แล้ว
+- **`collect_logs.sh` ทั้งสองเครื่องในคำสั่งเดียว**
 
-The single most common failure on 2026-09-07 was not a bug at all: a terminal
-that had not sourced the workspace, or had sourced the wrong one. The board's
-`~/.bashrc` sources an older `go2_control` from `~/UnitreeRos`, which shadows
-ours in every new shell. A launch file removes most of the opportunity.
+ปัญหาที่เจอบ่อยที่สุดวันที่ 7 ไม่ใช่บั๊กเลย — เป็นเทอร์มินัลที่ยังไม่ได้ source
+หรือ source ผิดชุด `~/.bashrc` ของบอร์ด source `go2_control` ตัวเก่าจาก
+`~/UnitreeRos` ซึ่งบังของเราในทุกเชลล์ใหม่ launch file ตัดโอกาสพลาดตรงนี้ออกไป
+เกือบหมด
 
-## 4. What should be tunable from the web, and what each one does
+## 4. อะไรควรปรับได้จากหน้าเว็บ และปรับแล้วเกิดอะไร
 
-Everything below is a live ROS parameter on `controller_server` and can be set
-without restarting anything:
+ทุกตัวข้างล่างเป็น ROS parameter ของ `controller_server` ตั้งสดได้โดยไม่ต้อง
+รีสตาร์ทอะไรเลย
 
 ```text
-                          now    raise it                 lower it
-FollowPath.max_vel_x      0.40   faster, longer stopping  slower, safer
-                                 distance than the
-                                 costmap sees ahead
-FollowPath.max_vel_theta  0.35   turns quicker, overshoots turns slowly; below
-                                 and hunts                ~0.2 the wheeled base
-                                                          may not turn at all
-FollowPath.acc_lim_x      0.35   reaches speed sooner     under ~0.2 DWB changes
-                                                          its mind before the
-                                                          robot reaches speed
-FollowPath.acc_lim_theta  0.50   snappier turns           sluggish, wide corners
+                          ตอนนี้  เพิ่มแล้ว                ลดแล้ว
+FollowPath.max_vel_x      0.40   เร็วขึ้น ระยะเบรกยาวกว่า   ช้าลง ปลอดภัยขึ้น
+                                 ที่ costmap มองเห็น
+FollowPath.max_vel_theta  0.35   เลี้ยวไวขึ้น แต่เลยแล้ว    เลี้ยวช้า ต่ำกว่า 0.2
+                                 แกว่งกลับ                ฐานล้ออาจไม่หมุนเลย
+FollowPath.acc_lim_x      0.35   ถึงความเร็วเร็วขึ้น        ต่ำกว่า 0.2 DWB
+                                                        เปลี่ยนใจก่อนหุ่นถึง
+                                                        ความเร็วที่สั่ง
+FollowPath.acc_lim_theta  0.50   เลี้ยวกระชับขึ้น           อืด โค้งกว้าง
 goal_checker.
-  xy_goal_tolerance       0.35   arrives sooner, stops    circles the goal
-                                 further away             forever below the
-                                                          localisation error
-  yaw_goal_tolerance      0.30   accepts a rougher        spins hunting for a
-                                 heading                  heading it cannot hold
+  xy_goal_tolerance       0.35   ถึงเร็วขึ้น หยุดห่างขึ้น    วนหาที่หมายไม่จบ
+                                                        ถ้าต่ำกว่าค่าคลาด
+  yaw_goal_tolerance      0.30   ยอมรับทิศที่หยาบขึ้น       หมุนหาทิศที่มันคุมไม่ได้
 ```
 
-**The floor on `xy_goal_tolerance` is set by localisation, not preference.**
-Measured error is 0.258 m mean and 0.494 m max. A robot cannot decide it has
-arrived within a distance smaller than its own uncertainty - at 0.25 it circled
-each waypoint for ten seconds and needed a recovery before accepting it. This
-comes down when AprilTag brings the error down, and not before.
+**ค่าต่ำสุดของ `xy_goal_tolerance` ถูกกำหนดด้วย localisation ไม่ใช่ความชอบ**
+ค่าคลาดที่วัดได้คือ 0.258 ม. เฉลี่ย และ 0.494 ม. สูงสุด หุ่นตัดสินว่าถึงที่หมาย
+ในระยะที่เล็กกว่าความไม่แน่นอนของตัวเองไม่ได้ — ตอนตั้ง 0.25 มันวนรอบจุดหมาย
+สิบวินาทีและต้อง recovery ก่อนจะยอมรับ ค่านี้จะลดได้เมื่อ AprilTag ทำให้ค่าคลาด
+ลดลง ไม่ใช่ก่อนหน้านั้น
 
-Two more worth exposing, on `local_costmap`:
+อีกสองตัวที่ควรเปิดให้ปรับ อยู่ที่ `local_costmap`
 
 ```text
-inflation_radius     0.35   raise: keeps further from walls, refuses narrow gaps
-cost_scaling_factor  2.0    raise: hugs the centre of free space more strongly
+inflation_radius     0.35   เพิ่ม: อยู่ห่างกำแพงมากขึ้น ไม่ยอมลอดช่องแคบ
+cost_scaling_factor  2.0    เพิ่ม: เกาะกลางพื้นที่ว่างมากขึ้น
 ```
 
-And on the bridge, which is not a ROS parameter and needs a restart:
-`--max-linear` and `--max-angular`. **The bridge's clamp wins over Nav2's.**
-On 2026-09-07 Nav2 was set to 0.40 while the bridge was still cutting to 0.25,
-and nothing anywhere reports the discrepancy - the robot simply runs slower
-than the number the operator set.
+และที่ bridge ซึ่งไม่ใช่ ROS parameter ต้องรีสตาร์ท — `--max-linear` กับ
+`--max-angular` **การตัดของ bridge ชนะของ Nav2 เสมอ** วันที่ 7 ตั้ง Nav2 ไว้
+0.40 ขณะที่ bridge ยังตัดที่ 0.25 และไม่มีอะไรตรงไหนรายงานความไม่ตรงกันนี้เลย
+หุ่นก็แค่วิ่งช้ากว่าเลขที่ตั้งไว้เฉย ๆ
 
-## 5. Stop, and a mode switch
+## 5. หยุดจากเว็บ และการเพิ่มโหมด
 
-Stop already works: `/missions/control` with `{"action": "stop"}` cancels the
-Nav2 goal and the robot stops. `pause` and `resume` work the same way. This was
-exercised on site.
+หยุดใช้ได้แล้ว — `/missions/control` ด้วย `{"action": "stop"}` จะ cancel goal
+ของ Nav2 แล้วหุ่นหยุด `pause` กับ `resume` ทำงานแบบเดียวกัน ทดสอบหน้างานแล้ว
 
-A mode switch is worth having and the shapes are already there:
+โหมดควรมี และโครงมีอยู่แล้ว
 
 ```text
-idle       nothing sends velocity. /cmd_vel_safe silent.
-manual     the operator drives; Nav2 is not asked for goals
-mission    what runs today
-slow       max_vel_x 0.15, max_vel_theta 0.2, for tight spaces
+idle       ไม่มีอะไรส่งความเร็ว /cmd_vel_safe เงียบ
+manual     คนขับเอง ไม่ส่ง goal ให้ Nav2
+mission    แบบที่ใช้อยู่ทุกวันนี้
+slow       max_vel_x 0.15, max_vel_theta 0.2 สำหรับที่แคบ
 ```
 
-`slow` is the one with immediate value, because tight and open spaces want
-different numbers and today changing them means typing parameter commands.
-Implementing modes is mostly a table of parameter sets and a `ros2 param set`
-loop in the bridge.
+`slow` คือตัวที่มีประโยชน์ทันที เพราะที่แคบกับที่โล่งต้องการเลขคนละชุด
+และตอนนี้การเปลี่ยนต้องพิมพ์คำสั่ง parameter เอง การทำโหมดคือตารางชุดค่า
+กับลูป `ros2 param set` ใน bridge เกือบทั้งหมด
 
-## 6. Zoom and drag on the web map
+## 6. ซูมและลากแมพบนหน้าเว็บ
 
-Nothing is needed from the robot side. `/missions/map` already carries what a
-canvas needs:
+ฝั่งหุ่นไม่ต้องเพิ่มอะไรเลย `/missions/map` มีครบที่ canvas ต้องใช้แล้ว
 
 ```text
-width, height        cells
-resolution           metres per cell
-origin {x, y, yaw}   the world coordinate of the map's bottom-left corner
-image                base64 PNG
+width, height        จำนวนเซลล์
+resolution           เมตรต่อเซลล์
+origin {x, y, yaw}   พิกัดโลกของมุมล่างซ้ายของแมพ
+image                PNG แบบ base64
 ```
 
-Zoom and pan are a frontend transform on that image. The robot marker is
-placed with:
+ซูมกับลากเป็น transform บนภาพนั้นที่ฝั่ง frontend ล้วน ๆ ส่วน marker ของหุ่น
+วางด้วยสูตรนี้
 
 ```text
 px = (x - origin.x) / resolution
 py = height - (y - origin.y) / resolution
 ```
 
-The `height -` is not optional. An OccupancyGrid's first row is the bottom of
-the map in world terms and every canvas draws the first row at the top; getting
-it wrong mirrors the building and is not obvious until the robot appears to
-drive through walls.
+**`height -` ไม่ใช่ของแถม** แถวแรกของ OccupancyGrid คือด้านล่างของแมพในเชิงพิกัดโลก
+แต่ canvas ทุกตัววาดแถวแรกไว้ด้านบน ถ้าทำผิดตรงนี้อาคารจะกลับด้าน และจะไม่รู้ตัว
+จนกว่าจะเห็นหุ่นเดินทะลุกำแพง
 
-## 7. Where the map is centred
+## 7. จุดกึ่งกลางของแมพคือค่าอะไร
 
-`origin` in the map's yaml is the world coordinate of the bottom-left cell:
+`origin` ในไฟล์ yaml ของแมพคือพิกัดโลกของเซลล์มุมล่างซ้าย
 
 ```text
 livox_site_20260907_1231
   origin      [-6.95, -12.2, 0]
   resolution  0.05 m/cell
-  size        284 x 304 cells = 14.2 x 15.2 m
+  ขนาด        284 x 304 เซลล์ = 14.2 x 15.2 เมตร
 ```
 
-So the map covers x from -6.95 to +7.25 and y from -12.2 to +3.0. The origin is
-wherever FAST-LIO happened to start when the map was made - it is not the
-centre of anything and carries no meaning beyond that.
+แมพจึงครอบคลุม x ตั้งแต่ -6.95 ถึง +7.25 และ y ตั้งแต่ -12.2 ถึง +3.0
+**origin คือจุดที่ FAST-LIO บังเอิญเริ่มตอนทำแมพ** ไม่ใช่จุดกึ่งกลางของอะไร
+และไม่มีความหมายอื่นนอกจากนั้น
 
-The web should centre its view on the robot, or on the map's centre computed
-from the metadata, rather than on (0,0).
+เว็บควรจัดกึ่งกลางที่ตัวหุ่น หรือที่กึ่งกลางแมพซึ่งคำนวณจาก metadata
+ไม่ใช่ที่ (0,0)
 
-## 8. Why turning goes wrong when it turns quickly
+## 8. ทำไมหมุนเร็วแล้วเพี้ยน
 
-Observed on site: at `max_vel_theta` 0.6 the robot turned but the pose "went
-off". That is not the controller. Rotation is where this sensor is weakest -
-the projected scan carries about 54% of its beams and a different set each
-frame, so a fast turn changes which walls are visible faster than AMCL can
-re-converge, and the correction arrives late and large.
+ที่สังเกตหน้างาน — ตั้ง `max_vel_theta` 0.6 แล้วหุ่นหมุนได้ แต่ตำแหน่ง "เพี้ยน"
+นั่นไม่ใช่เรื่องของ controller การหมุนคือจุดที่เซนเซอร์ตัวนี้อ่อนที่สุด
+สแกนที่ฉายออกมามีลำแสงราว 54% และเป็นคนละชุดกันทุกเฟรม การหมุนเร็วทำให้กำแพง
+ที่มองเห็นเปลี่ยนเร็วกว่าที่ AMCL จะลู่เข้าใหม่ทัน การแก้ค่าจึงมาช้าและมาทีละมาก
 
-Three things help, in order:
+สามอย่างที่ช่วยได้ เรียงตามลำดับ
 
-- **Turn more slowly.** 0.35 was settled on for this reason.
-- **`alpha1` and `alpha2`**, already lowered from 0.10/0.4 to 0.03/0.10 on
-  2026-09-07. They tell AMCL how much rotational error to expect from
-  FAST-LIO's odometry, which is IMU-aided and better than the old values
-  allowed for. That change is recorded but **has not been measured** - see
-  `LIVOX_AMCL_TUNING_2026-09-03.md`.
-- **AprilTag.** If the pose still degrades on turns with alpha1 at 0.03, the
-  cause is that the scan is too sparse to constrain rotation at all. That is a
-  sensor limit and no parameter fixes it.
+- **หมุนช้าลง** 0.35 ที่ใช้อยู่มาจากเหตุผลนี้
+- **`alpha1` กับ `alpha2`** ลดจาก 0.10/0.4 เป็น 0.03/0.10 ไปแล้ววันที่ 7
+  สองตัวนี้บอก AMCL ว่าให้เผื่อความคลาดของการหมุนจาก odometry เท่าไหร่
+  ซึ่ง odometry มาจาก FAST-LIO ที่มี IMU ช่วยและแม่นกว่าค่าเดิมเผื่อไว้มาก
+  **แต่ยังไม่ได้วัด** ดู `LIVOX_AMCL_TUNING_2026-09-03.md`
+- **AprilTag** ถ้าลด alpha1 เหลือ 0.03 แล้วตำแหน่งยังแย่ตอนหมุน แปลว่าสแกนบาง
+  เกินกว่าจะยึดการหมุนได้เลย นั่นเป็นข้อจำกัดของเซนเซอร์ ไม่มีพารามิเตอร์ตัวไหน
+  แก้ได้
 
-## 9. The test plan
+## 9. แผนการทดสอบ
 
-The seven cases proposed are good and the ordering is right - a single post,
-then a post to circle, then an obstruction, then loops. What is missing is
-mostly about knowing *why* a case failed rather than only that it did.
+เจ็ดข้อที่วางไว้ดีแล้วและลำดับถูก — เสาเดี่ยว แล้วเลี้ยวรอบเสา แล้วมีของขวาง
+แล้วเดินครบรอบ ที่ขาดส่วนใหญ่เป็นเรื่องของการรู้ว่า**ทำไม**มันล้ม ไม่ใช่รู้แค่ว่าล้ม
 
-**Add before case 1:**
+**เพิ่มก่อนข้อ 1**
 
-- **A stationary baseline.** Robot still, localised, for five minutes. Record
-  the spread of `/amcl_pose`. Without it, an error at a waypoint cannot be told
-  apart from an error the robot has while standing still.
-- **Repeatability of one goal.** The same goal, ten times, from the same start.
-  The spread of where it stops is the number that decides whether
-  `xy_goal_tolerance` can come down.
+- **วัดตอนหุ่นยืนนิ่ง** ให้หุ่นนิ่งและ localised ไว้ห้านาที บันทึกการกระจายของ
+  `/amcl_pose` ถ้าไม่มีอันนี้ จะแยกไม่ออกว่าค่าคลาดที่จุดหมายเป็นเพราะการเดิน
+  หรือเป็นค่าคลาดที่มีอยู่ตลอดเวลาอยู่แล้ว
+- **ยิงเป้าเดิมซ้ำสิบครั้ง** จากจุดเริ่มเดียวกัน การกระจายของจุดที่มันหยุด
+  คือตัวเลขที่ตัดสินว่า `xy_goal_tolerance` ลดลงได้หรือไม่
 
-**Add between:**
+**เพิ่มระหว่างข้อ**
 
-- **An obstacle lower than 25 cm.** Section 1 says the robot cannot see it.
-  Confirm that on purpose, in a controlled way, before discovering it with a
-  pallet.
-- **An obstacle that appears after the plan is made.** Case 3 has it in place
-  from the start; walking something into the path mid-mission is the case that
-  matters for a robot working around people.
-- **A goal inside an obstacle**, and **a goal outside the map.** Both should be
-  refused cleanly rather than driven at.
-- **Stop and resume mid-leg**, from the web. Exercised once on site; it belongs
-  in the list.
-- **A capture point**, since photographs are the deliverable and a mission that
-  navigates perfectly and returns no pictures has failed.
+- **สิ่งกีดขวางที่เตี้ยกว่า 25 ซม.** หัวข้อที่ 1 บอกว่าหุ่นมองไม่เห็น ยืนยัน
+  ให้เห็นกับตาแบบตั้งใจและควบคุมได้ ก่อนจะไปเจอเองด้วยพาเลท
+- **สิ่งกีดขวางที่มาทีหลังตอนวางแผนเสร็จแล้ว** ข้อ 3 วางของขวางไว้ตั้งแต่ต้น
+  แต่การเดินของเข้ามาขวางกลางมิชชันคือเคสที่สำคัญจริงสำหรับหุ่นที่ทำงานรอบ ๆ คน
+- **เป้าที่อยู่ในกำแพง** และ **เป้าที่อยู่นอกแมพ** ทั้งคู่ควรถูกปฏิเสธอย่างสะอาด
+  ไม่ใช่ขับเข้าใส่
+- **หยุดแล้วไปต่อกลางทาง** จากหน้าเว็บ ทำไปครั้งหนึ่งหน้างานแล้ว ควรอยู่ในรายการ
+- **จุดถ่ายรูป** เพราะรูปคือของที่ต้องส่งมอบ มิชชันที่เดินสวยงามแต่ไม่ได้รูปกลับมา
+  คือมิชชันที่ล้มเหลว
 
-**Add after the loops:**
+**เพิ่มหลังข้อเดินครบรอบ**
 
-- **Localisation recovery.** Cover the sensor, or carry the robot two metres,
-  and see whether AMCL recovers or has to be re-seeded. This will happen in
-  service.
-- **Wi-Fi loss mid-mission.** With everything on the board it should not matter,
-  which is the claim worth testing rather than assuming.
-- **Battery to 20%.** Nothing in the stack watches the battery today.
+- **การกู้ตำแหน่ง** ปิดเซนเซอร์ หรืออุ้มหุ่นย้ายสองเมตร แล้วดูว่า AMCL กลับมาเองได้
+  หรือต้องตั้งตำแหน่งใหม่ เรื่องนี้จะเกิดตอนใช้งานจริงแน่นอน
+- **Wi-Fi หลุดกลางมิชชัน** ในเมื่อทุกอย่างรันบนบอร์ดแล้วมันไม่ควรมีผล
+  ซึ่งเป็นข้ออ้างที่ควรทดสอบมากกว่าจะเชื่อไปเอง
+- **แบตเหลือ 20%** ตอนนี้ไม่มีอะไรในสแตกเฝ้าดูแบตเลย
 
-**For every case, record rather than judge by eye:**
+**ทุกเคส ให้อัดไว้ อย่าตัดสินด้วยตาเปล่า**
 
 ```text
 ros2 bag record /livox/lidar /livox/imu /Odometry /odom /scan /tf /tf_static \
     /map /amcl_pose /particlecloud /cmd_vel_nav_preview /cmd_vel_safe
 ```
 
-On 2026-09-07 the difference between "it wandered" and a number came entirely
-from having the bag. The loop-stacking cases in particular cannot be answered
-by watching - they need `/amcl_pose` against `/Odometry` over several laps.
+วันที่ 7 ความต่างระหว่าง "มันเดินเพี้ยน" กับตัวเลขจริง มาจากการมี bag ล้วน ๆ
+โดยเฉพาะเคสเดินหลายรอบเพื่อดูว่า error สะสมไหม ดูด้วยตาตอบไม่ได้เลย
+ต้องเอา `/amcl_pose` เทียบกับ `/Odometry` ข้ามหลายรอบ
