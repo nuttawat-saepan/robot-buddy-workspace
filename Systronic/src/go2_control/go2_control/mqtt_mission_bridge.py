@@ -69,34 +69,43 @@ from std_msgs.msg import String
 import tf2_ros
 
 
-# --------------------------------------------------------- live parameters
+# ------------------------------------------------------------- parameters
 
-# The eight values the web may change while the robot is running, each mapped
-# to the node that owns it and its full parameter name.
+# The eight values the web may set, each mapped to the node that owns it, its
+# full parameter name, and whether the running node actually picks the change
+# up.
 #
-# Every one of these is read by its node on the cycle it is used, so a set
-# call takes effect on the next control period with nothing to restart.
+# 'live' means the node subscribes to parameter events and re-reads: on Foxy
+# that is dwb_plugins::KinematicsHandler, which has an
+# on_parameter_event_callback and is what holds the speed and acceleration
+# limits. Those four take effect on the next control period.
 #
-# AMCL's parameters are deliberately absent, and the absence is the point.
-# Foxy's nav2_amcl reads update_min_d, min_particles, laser_max_range and the
-# rest once, in on_configure, into its own members - a set call afterwards
-# returns success and changes nothing. A panel offering them would lie in
-# exactly the way the bridge clamp lied on site on 2026-09-07. Changing them
-# means editing the yaml and taking AMCL through the lifecycle again, which
-# also throws away the pose estimate, so it is not a slider.
+# 'restart' means the node read the value once, at configure or initialise
+# time, into its own members and will never look again. Foxy's
+# SimpleGoalChecker and InflationLayer both do this - neither library carries
+# a parameter callback of any kind. A set call still succeeds and the new
+# value is visible to `ros2 param get`, and the robot goes on using the old
+# one. That gap is reported rather than hidden; it is the same failure as the
+# bridge clamp, and it is why the reply carries an `applies` field.
+#
+# AMCL's update_min_d, min_particles and the rest are absent for the same
+# reason, one step worse: they need the lifecycle taken down and back up,
+# which also throws away the pose estimate.
 TUNABLE = {
-    'max_vel_x': ('/controller_server', 'FollowPath.max_vel_x'),
-    'max_vel_theta': ('/controller_server', 'FollowPath.max_vel_theta'),
-    'acc_lim_x': ('/controller_server', 'FollowPath.acc_lim_x'),
-    'acc_lim_theta': ('/controller_server', 'FollowPath.acc_lim_theta'),
+    'max_vel_x': ('/controller_server', 'FollowPath.max_vel_x', 'live'),
+    'max_vel_theta': ('/controller_server', 'FollowPath.max_vel_theta',
+                      'live'),
+    'acc_lim_x': ('/controller_server', 'FollowPath.acc_lim_x', 'live'),
+    'acc_lim_theta': ('/controller_server', 'FollowPath.acc_lim_theta',
+                      'live'),
     'xy_goal_tolerance': ('/controller_server',
-                          'goal_checker.xy_goal_tolerance'),
+                          'goal_checker.xy_goal_tolerance', 'restart'),
     'yaw_goal_tolerance': ('/controller_server',
-                           'goal_checker.yaw_goal_tolerance'),
+                           'goal_checker.yaw_goal_tolerance', 'restart'),
     'inflation_radius': ('/local_costmap/local_costmap',
-                         'inflation_layer.inflation_radius'),
+                         'inflation_layer.inflation_radius', 'restart'),
     'cost_scaling_factor': ('/local_costmap/local_costmap',
-                            'inflation_layer.cost_scaling_factor'),
+                            'inflation_layer.cost_scaling_factor', 'restart'),
 }
 
 # Bounds that are not a matter of taste. A request outside them is clamped
@@ -217,7 +226,7 @@ class MqttMissionBridge(Node):
         from rcl_interfaces.srv import GetParameters, SetParameters
         self._get_cli = {}
         self._set_cli = {}
-        for node_name in sorted({n for n, _ in TUNABLE.values()}):
+        for node_name in sorted({t[0] for t in TUNABLE.values()}):
             self._get_cli[node_name] = self.create_client(
                 GetParameters, node_name + '/get_parameters')
             self._set_cli[node_name] = self.create_client(
@@ -383,10 +392,8 @@ class MqttMissionBridge(Node):
         from rcl_interfaces.srv import GetParameters
         values = {}
         for node_name, cli in self._get_cli.items():
-            names = [full for key, (owner, full) in TUNABLE.items()
-                     if owner == node_name]
-            keys = [key for key, (owner, _) in TUNABLE.items()
-                    if owner == node_name]
+            names = [t[1] for t in TUNABLE.values() if t[0] == node_name]
+            keys = [k for k, t in TUNABLE.items() if t[0] == node_name]
             if not cli.service_is_ready():
                 self.get_logger().warn(
                     '%s is not up - its parameters are reported as unknown'
@@ -421,7 +428,7 @@ class MqttMissionBridge(Node):
             value, note = _clamp(key, value)
             if note:
                 notes.append(note)
-            node_name, full = TUNABLE[key]
+            node_name, full, _applies = TUNABLE[key]
             param = Parameter()
             param.name = full
             param.value = ParameterValue()
@@ -446,6 +453,13 @@ class MqttMissionBridge(Node):
                     notes.append('%s refused: %s' % (
                         param.name, result.reason or 'no reason given'))
 
+        stale = sorted({k for k in requested
+                        if k in TUNABLE and TUNABLE[k][2] == 'restart'})
+        if stale:
+            notes.append(
+                'stored but NOT in use until the stack is relaunched: %s'
+                % ', '.join(stale))
+
         for note in notes:
             self.get_logger().warn(note)
         # Always answer with what the nodes hold now, not with what was
@@ -463,6 +477,12 @@ class MqttMissionBridge(Node):
             'values': values,
             'limits': {k: {'min': lo, 'max': hi}
                        for k, (lo, hi) in LIMITS.items()},
+            # 'live' takes effect on the next control period. 'restart' is
+            # stored, is visible to ros2 param get, and is NOT used by the
+            # running robot until the stack is relaunched. The panel has to
+            # say so; a slider that moves and changes nothing is worse than
+            # no slider.
+            'applies': {k: t[2] for k, t in TUNABLE.items()},
             'readonly': {
                 'bridge_max_linear': self.bridge_max_linear,
                 'bridge_max_angular': self.bridge_max_angular,
