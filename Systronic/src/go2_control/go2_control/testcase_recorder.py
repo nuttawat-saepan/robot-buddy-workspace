@@ -320,6 +320,17 @@ class TestcaseRecorder(Node):
                 if math.isfinite(r['goal_dist']) and r['goal_dist'] <= arrive:
                     after = i + 1
                     break
+            # The closest the robot's centre ever got to the goal. When the
+            # goal is deliberately unreachable - put on a pillar to see where
+            # the inflation layer stops the robot - this is the whole result
+            # of the run, and the final pose is not, because Nav2 wanders off
+            # into recoveries once it decides it cannot arrive.
+            near = [(r['goal_dist'], r['t']) for r in self.rows
+                    if math.isfinite(r['goal_dist'])]
+            if near:
+                dist, at = min(near)
+                s['min_goal_dist_m'] = round(dist, 4)
+                s['min_goal_dist_at_s'] = at
             s['arrived'] = after is not None
             s['max_dist_after_arrival_m'] = round(
                 max((r['goal_dist'] for r in self.rows[after:]
