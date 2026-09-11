@@ -22,7 +22,7 @@ web has been seen to work against it.
                               waypoints: [{sequence, x, y, yaw, isCapture,
                                            name}]}
     in   /missions/control   {action: "pause" | "resume" | "stop"
-                                      | "get_params"
+                                      | "get_state" | "get_params"
                                       | "set_params", params: {...}}
     out  <statusTopic>       {runId, missionId, status, message}
     out  <progressTopic>     {runId, missionId, progress, currentWaypointIndex,
@@ -34,6 +34,9 @@ web has been seen to work against it.
     out  /missions/pose      {x, y, yaw, frame, timestamp}
     out  /missions/params    {values, limits, readonly,
                               clamped_by_bridge, notes, timestamp}
+    out  /missions/state     {hasMission, runId, missionId, paused, stopping,
+                              waypointCount, hasMap, statusTopic,
+                              progressTopic, imageTopic, timestamp}
 
 The reply topics are named by the web inside the mission payload rather than
 being fixed here, which is how main.py works and is worth keeping: one robot
@@ -183,6 +186,8 @@ class MqttMissionBridge(Node):
 
         self.params_topic = self.declare_parameter(
             'params_topic', '/missions/params').value
+        self.state_topic = self.declare_parameter(
+            'state_topic', '/missions/state').value
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -201,6 +206,8 @@ class MqttMissionBridge(Node):
         self.mission = None
         self.paused = False
         self.stopping = False
+        self.last_status = None
+        self.last_progress = None
         self.goal_handle = None
         self.worker = None
 
@@ -262,9 +269,9 @@ class MqttMissionBridge(Node):
         self.get_logger().info('MQTT connected rc=%s' % rc)
         client.subscribe('/missions/start')
         client.subscribe('/missions/control')
-        # A page opened after the robot has been up would otherwise show
-        # empty sliders until someone pressed something.
-        self._publish_params()
+        # A page opened after the robot has been up would otherwise show an
+        # empty map, no robot, and empty sliders until something changed.
+        self._publish_state()
 
     def _publish(self, topic, payload):
         if not topic or self.mqtt is None:
@@ -302,12 +309,53 @@ class MqttMissionBridge(Node):
             self.paused = False
             self._cancel_current()
             self.get_logger().warn('stopped by the web')
+        elif action == 'get_state':
+            self._publish_state()
         elif action == 'get_params':
             self._publish_params()
         elif action == 'set_params':
             self._set_params(data.get('params') or {})
         else:
             self.get_logger().warn('unknown control action %r' % action)
+
+    def _publish_state(self):
+        """Everything a page that just opened has missed, sent at once.
+
+        MQTT delivers what is published while you are subscribed and nothing
+        before it, and the robot's state is published on its own schedule:
+        the map every 30 seconds, status only when it changes. A browser
+        opened in between had no way to ask, so it showed an empty map and an
+        idle robot while a mission was running. This is that way.
+
+        Everything here is a republication of what the robot already sends on
+        the normal topics, on the normal topics, so the web needs no second
+        code path to handle it - the same subscriber that draws the map
+        during a run draws it here.
+        """
+        self._publish_map()
+        self._publish_pose()
+        self._publish_params()
+        m = self.mission or {}
+        if self.last_status:
+            self._publish(m.get('statusTopic'), self.last_status)
+        if self.last_progress:
+            self._publish(m.get('progressTopic'), self.last_progress)
+        # Sent even when nothing is running, so the page can tell "no mission"
+        # apart from "the robot did not answer". paused is not a status of its
+        # own in the protocol, and a page cannot infer it from RUNNING alone.
+        self._publish(self.state_topic, {
+            'hasMission': bool(self.mission),
+            'runId': m.get('runId'),
+            'missionId': m.get('missionId'),
+            'paused': bool(self.paused),
+            'stopping': bool(self.stopping),
+            'waypointCount': len(m.get('waypoints') or []),
+            'hasMap': self.map_payload is not None,
+            'statusTopic': m.get('statusTopic'),
+            'progressTopic': m.get('progressTopic'),
+            'imageTopic': m.get('imageTopic'),
+            'timestamp': int(time.time()),
+        })
 
     # ----------------------------------------------------------- parameters
 
@@ -480,16 +528,22 @@ class MqttMissionBridge(Node):
 
     def _status(self, status, message=''):
         m = self.mission or {}
-        self._publish(m.get('statusTopic'),
-                      {'runId': m.get('runId'), 'missionId': m.get('missionId'),
-                       'status': status, 'message': message})
+        payload = {'runId': m.get('runId'), 'missionId': m.get('missionId'),
+                   'status': status, 'message': message}
+        # Kept so a page that opened mid-mission can be told where things
+        # stand. Status is otherwise only sent when it changes, which for a
+        # long leg is minutes apart, and a browser refreshed in that gap sees
+        # a running robot as an idle one.
+        self.last_status = payload
+        self._publish(m.get('statusTopic'), payload)
 
     def _progress(self, index, name, percent, message=''):
         m = self.mission or {}
-        self._publish(m.get('progressTopic'),
-                      {'runId': m.get('runId'), 'missionId': m.get('missionId'),
-                       'progress': percent, 'currentWaypointIndex': index,
-                       'currentWaypointName': name, 'message': message})
+        payload = {'runId': m.get('runId'), 'missionId': m.get('missionId'),
+                   'progress': percent, 'currentWaypointIndex': index,
+                   'currentWaypointName': name, 'message': message}
+        self.last_progress = payload
+        self._publish(m.get('progressTopic'), payload)
 
     def _run_mission(self):
         mission = self.mission
