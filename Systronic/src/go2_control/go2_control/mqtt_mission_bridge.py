@@ -54,6 +54,7 @@ watchdog and the bridge exactly as a goal from send_mission does.
 """
 
 import base64
+import collections
 import json
 import os
 import threading
@@ -72,41 +73,67 @@ import tf2_ros
 
 # ------------------------------------------------------------- parameters
 
-# The eight values the web may set, each mapped to the node that owns it, its
-# full parameter name, and whether the running node actually picks the change
-# up.
+Tunable = collections.namedtuple('Tunable', 'node name applies kind')
+
+# The values the web may set: which node owns each, its full parameter name,
+# whether the running node picks a change up on its own, and its type.
 #
-# 'live' means the node subscribes to parameter events and re-reads: on Foxy
-# that is dwb_plugins::KinematicsHandler, which has an
-# on_parameter_event_callback and is what holds the speed and acceleration
-# limits. Those four take effect on the next control period.
+# 'live' means the node subscribes to parameter events and re-reads. On Foxy
+# the only one that does is dwb_plugins::KinematicsHandler, which holds the
+# speed and acceleration limits, so those four take effect on the next
+# control period.
 #
-# 'restart' means the node read the value once, at configure or initialise
-# time, into its own members and will never look again. Foxy's
-# SimpleGoalChecker and InflationLayer both do this - neither library carries
-# a parameter callback of any kind. A set call still succeeds and the new
-# value is visible to `ros2 param get`, and the robot goes on using the old
-# one. That gap is reported rather than hidden; it is the same failure as the
-# bridge clamp, and it is why the reply carries an `applies` field.
+# 'restart' means the node read the value once - at configure, or at
+# onInitialize - into its own members and will never look again. A set call
+# still succeeds and `ros2 param get` returns the new number while the robot
+# goes on using the old one. Those are applied by taking the owning node
+# round its lifecycle, which is what "restart": true on /missions/control
+# asks for.
 #
-# AMCL's update_min_d, min_particles and the rest are absent for the same
-# reason, one step worse: they need the lifecycle taken down and back up,
-# which also throws away the pose estimate.
+# The AMCL group is the one measured: /amcl went round deactivate, cleanup,
+# configure, activate in 18 ms on a replayed stack on 2026-09-11, with
+# lifecycle_manager not reacting and the pose coming back by itself through
+# save_pose_rate. controller_server has not had the same test.
 TUNABLE = {
-    'max_vel_x': ('/controller_server', 'FollowPath.max_vel_x', 'live'),
-    'max_vel_theta': ('/controller_server', 'FollowPath.max_vel_theta',
-                      'live'),
-    'acc_lim_x': ('/controller_server', 'FollowPath.acc_lim_x', 'live'),
-    'acc_lim_theta': ('/controller_server', 'FollowPath.acc_lim_theta',
-                      'live'),
-    'xy_goal_tolerance': ('/controller_server',
-                          'goal_checker.xy_goal_tolerance', 'restart'),
-    'yaw_goal_tolerance': ('/controller_server',
-                           'goal_checker.yaw_goal_tolerance', 'restart'),
-    'inflation_radius': ('/local_costmap/local_costmap',
-                         'inflation_layer.inflation_radius', 'restart'),
-    'cost_scaling_factor': ('/local_costmap/local_costmap',
-                            'inflation_layer.cost_scaling_factor', 'restart'),
+    'max_vel_x': Tunable(
+        '/controller_server', 'FollowPath.max_vel_x', 'live', float),
+    'max_vel_theta': Tunable(
+        '/controller_server', 'FollowPath.max_vel_theta', 'live', float),
+    'acc_lim_x': Tunable(
+        '/controller_server', 'FollowPath.acc_lim_x', 'live', float),
+    'acc_lim_theta': Tunable(
+        '/controller_server', 'FollowPath.acc_lim_theta', 'live', float),
+
+    'xy_goal_tolerance': Tunable(
+        '/controller_server', 'goal_checker.xy_goal_tolerance', 'restart',
+        float),
+    'yaw_goal_tolerance': Tunable(
+        '/controller_server', 'goal_checker.yaw_goal_tolerance', 'restart',
+        float),
+    'inflation_radius': Tunable(
+        '/local_costmap/local_costmap', 'inflation_layer.inflation_radius',
+        'restart', float),
+    'cost_scaling_factor': Tunable(
+        '/local_costmap/local_costmap', 'inflation_layer.cost_scaling_factor',
+        'restart', float),
+
+    'update_min_d': Tunable('/amcl', 'update_min_d', 'restart', float),
+    'update_min_a': Tunable('/amcl', 'update_min_a', 'restart', float),
+    'min_particles': Tunable('/amcl', 'min_particles', 'restart', int),
+    'max_particles': Tunable('/amcl', 'max_particles', 'restart', int),
+    'laser_max_range': Tunable('/amcl', 'laser_max_range', 'restart', float),
+    'transform_tolerance': Tunable(
+        '/amcl', 'transform_tolerance', 'restart', float),
+}
+
+# The node to cycle to make each owner's restart values take effect. The
+# local costmap is not cycled on its own: its lifecycle is driven by the
+# controller that constructed it, and transitioning it from outside would
+# leave the two disagreeing about what state it is in.
+CYCLE_OWNER = {
+    '/controller_server': '/controller_server',
+    '/local_costmap/local_costmap': '/controller_server',
+    '/amcl': '/amcl',
 }
 
 # Bounds that are not a matter of taste. A request outside them is clamped
@@ -121,6 +148,12 @@ TUNABLE = {
 #   max_vel_theta       under 0.2 the wheel base may not turn at all.
 #   acc_lim_x           under 0.2 DWB re-plans before the robot has reached
 #                       the speed it asked for.
+#   update_min_d        0.05 is the measurement setting: /amcl_pose is only
+#                       published on update, so a stopped robot holds a pose
+#                       up to update_min_d metres stale, which at the shipped
+#                       0.20 is the size of the error being measured.
+#   max_particles       the ceiling is a CPU limit, not a quality one. The
+#                       board has never been measured under this stack.
 LIMITS = {
     'max_vel_x': (0.05, 0.60),
     'max_vel_theta': (0.20, 0.80),
@@ -130,6 +163,12 @@ LIMITS = {
     'yaw_goal_tolerance': (0.10, 1.00),
     'inflation_radius': (0.10, 1.00),
     'cost_scaling_factor': (1.0, 10.0),
+    'update_min_d': (0.02, 0.50),
+    'update_min_a': (0.02, 0.50),
+    'min_particles': (100, 2000),
+    'max_particles': (500, 10000),
+    'laser_max_range': (5.0, 40.0),
+    'transform_tolerance': (0.10, 2.00),
 }
 
 
@@ -141,6 +180,7 @@ def _clamp(name, value):
     if value > high:
         return high, '%s lowered to the ceiling %s' % (name, high)
     return value, None
+
 
 
 def yaw_to_quaternion(yaw):
@@ -228,7 +268,7 @@ class MqttMissionBridge(Node):
         from rcl_interfaces.srv import GetParameters, SetParameters
         self._get_cli = {}
         self._set_cli = {}
-        for node_name in sorted({t[0] for t in TUNABLE.values()}):
+        for node_name in sorted({t.node for t in TUNABLE.values()}):
             self._get_cli[node_name] = self.create_client(
                 GetParameters, node_name + '/get_parameters')
             self._set_cli[node_name] = self.create_client(
@@ -238,8 +278,10 @@ class MqttMissionBridge(Node):
         # all. The costmap is not cycled on its own: its lifecycle is driven
         # by the controller, and transitioning it from outside would leave
         # the two disagreeing about what state it is in.
-        self._cycle_cli = self.create_client(
-            ChangeState, '/controller_server/change_state')
+        self._cycle_cli = {}
+        for owner in sorted(set(CYCLE_OWNER.values())):
+            self._cycle_cli[owner] = self.create_client(
+                ChangeState, owner + '/change_state')
 
         self.mqtt = None
         self._connect_mqtt()
@@ -402,8 +444,9 @@ class MqttMissionBridge(Node):
         from rcl_interfaces.srv import GetParameters
         values = {}
         for node_name, cli in self._get_cli.items():
-            names = [t[1] for t in TUNABLE.values() if t[0] == node_name]
-            keys = [k for k, t in TUNABLE.items() if t[0] == node_name]
+            names = [t.name for t in TUNABLE.values()
+                     if t.node == node_name]
+            keys = [k for k, t in TUNABLE.items() if t.node == node_name]
             if not cli.service_is_ready():
                 self.get_logger().warn(
                     '%s is not up - its parameters are reported as unknown'
@@ -416,32 +459,39 @@ class MqttMissionBridge(Node):
                 self.get_logger().warn('no reply from %s' % node_name)
                 continue
             for key, value in zip(keys, res.values):
-                values[key] = value.double_value
+                values[key] = (value.integer_value
+                               if TUNABLE[key].kind is int
+                               else value.double_value)
         return values
 
-    def _cycle_controller(self):
-        """Take controller_server round its lifecycle so it re-reads.
+    def _cycle(self, owner):
+        """Take one node round its lifecycle so it re-reads its parameters.
 
-        The goal checker's tolerances and the inflation layer's radius are
-        read once, at configure and at onInitialize, into members that
-        nothing updates afterwards. This is the cheap way to make them take
-        effect: verified against /amcl on a replayed stack on 2026-09-11,
-        where the four transitions took 18 ms and lifecycle_manager did not
-        react at all - no bond break, no restart of the managed set.
+        The goal checker's tolerances, the inflation layer's radius and
+        every AMCL value here are read once - at configure, or at
+        onInitialize - into members that nothing updates afterwards. This is
+        the cheap way to make them take effect.
 
-        **The same check has not been run against controller_server.** AMCL
-        is a leaf; the controller owns a costmap and an action server, and a
-        client mid-goal when this happens is a case nothing here has seen.
-        That is why a running mission is refused rather than paused.
+        Measured against /amcl on a replayed stack on 2026-09-11: the four
+        transitions took 18 ms, lifecycle_manager did not react at all - no
+        bond break, no restart of the managed set - and the pose came back on
+        its own, because AMCL writes it into initial_pose.* twice a second
+        under save_pose_rate and seeds from there when it configures.
+
+        **controller_server has not had that test.** AMCL is a leaf; the
+        controller owns a costmap and an action server, and a client mid-goal
+        when this happens is a case nothing here has seen. That is why a
+        running mission is refused outright rather than paused around.
         """
         from lifecycle_msgs.msg import Transition
         from lifecycle_msgs.srv import ChangeState
 
         if self.mission is not None and not self.stopping:
-            return ['a mission is running - refusing to cycle '
-                    'controller_server. Stop the mission first.']
-        if not self._cycle_cli.service_is_ready():
-            return ['/controller_server is not up - nothing was cycled']
+            return ['a mission is running - refusing to cycle %s. Stop the '
+                    'mission first.' % owner]
+        cli = self._cycle_cli.get(owner)
+        if cli is None or not cli.service_is_ready():
+            return ['%s is not up - nothing was cycled' % owner]
 
         notes = []
         for label, transition in (
@@ -451,19 +501,19 @@ class MqttMissionBridge(Node):
                 ('activate', Transition.TRANSITION_ACTIVATE)):
             req = ChangeState.Request()
             req.transition = Transition(id=transition)
-            res = self._wait(self._cycle_cli.call_async(req), timeout=15.0)
+            res = self._wait(cli.call_async(req), timeout=15.0)
             if res is None or not res.success:
-                # Half a cycle is worse than none: the controller is left
-                # inactive and will not drive until someone finishes the
-                # sequence by hand. Say so rather than reporting a number.
+                # Half a cycle is worse than none: the node is left inactive
+                # and will not do its job until someone finishes the sequence
+                # by hand. Say FAILED rather than reporting a number.
                 notes.append(
-                    'controller_server %s FAILED - it is not active and the '
-                    'robot cannot be driven until it is brought back' % label)
+                    '%s %s FAILED - it is not active and will stay that way '
+                    'until someone brings it back' % (owner, label))
                 self.get_logger().error(notes[-1])
                 return notes
-        notes.append('controller_server cycled - the restart values are now '
-                     'in use')
-        self.get_logger().warn(notes[-1])
+        # Not logged here: _set_params logs every note it collects, and a
+        # success line printed in both places reads on site as two cycles.
+        notes.append('%s cycled - its restart values are now in use' % owner)
         return notes
 
     def _set_params(self, requested, restart=False):
@@ -485,13 +535,20 @@ class MqttMissionBridge(Node):
             value, note = _clamp(key, value)
             if note:
                 notes.append(note)
-            node_name, full, _applies = TUNABLE[key]
+            spec = TUNABLE[key]
             param = Parameter()
-            param.name = full
+            param.name = spec.name
             param.value = ParameterValue()
-            param.value.type = ParameterType.PARAMETER_DOUBLE
-            param.value.double_value = value
-            by_node.setdefault(node_name, []).append(param)
+            # The type has to match what the node declared. A double sent to
+            # an integer parameter is refused with a type error, which is how
+            # min_particles would have failed had it gone out as a double.
+            if spec.kind is int:
+                param.value.type = ParameterType.PARAMETER_INTEGER
+                param.value.integer_value = int(round(value))
+            else:
+                param.value.type = ParameterType.PARAMETER_DOUBLE
+                param.value.double_value = value
+            by_node.setdefault(spec.node, []).append(param)
 
         for node_name, params in by_node.items():
             cli = self._set_cli[node_name]
@@ -510,14 +567,34 @@ class MqttMissionBridge(Node):
                     notes.append('%s refused: %s' % (
                         param.name, result.reason or 'no reason given'))
 
+        # The particle counts are the one pair where each value can be
+        # inside its own bounds and the pair still nonsense. AMCL accepts
+        # min > max and then behaves unpredictably, so it is caught here.
+        lo = requested.get('min_particles')
+        hi = requested.get('max_particles')
+        if lo is not None and hi is not None:
+            try:
+                if float(lo) > float(hi):
+                    notes.append('min_particles above max_particles - both '
+                                 'ignored')
+                    by_node = {n: [p for p in ps
+                                   if p.name not in ('min_particles',
+                                                     'max_particles')]
+                               for n, ps in by_node.items()}
+            except (TypeError, ValueError):
+                pass
+
         stale = sorted({k for k in requested
-                        if k in TUNABLE and TUNABLE[k][2] == 'restart'})
+                        if k in TUNABLE and TUNABLE[k].applies == 'restart'})
         if stale and not restart:
+            owners = sorted({CYCLE_OWNER[TUNABLE[k].node] for k in stale})
             notes.append(
-                'stored but NOT in use until controller_server is cycled: %s'
-                % ', '.join(stale))
+                'stored but NOT in use until %s cycled: %s'
+                % (' and '.join(owners) + (' are' if len(owners) > 1
+                                           else ' is'), ', '.join(stale)))
         elif stale and restart:
-            notes.extend(self._cycle_controller())
+            for owner in sorted({CYCLE_OWNER[TUNABLE[k].node] for k in stale}):
+                notes.extend(self._cycle(owner))
         elif restart and not stale:
             notes.append('nothing asked for needed a restart - not cycling')
 
@@ -543,7 +620,13 @@ class MqttMissionBridge(Node):
             # running robot until the stack is relaunched. The panel has to
             # say so; a slider that moves and changes nothing is worse than
             # no slider.
-            'applies': {k: t[2] for k, t in TUNABLE.items()},
+            'applies': {k: t.applies for k, t in TUNABLE.items()},
+            # Which node has to be cycled for each restart value,
+            # so the panel can group them: one Apply per node
+            # rather than one per slider.
+            'cycles': {k: CYCLE_OWNER[t.node]
+                       for k, t in TUNABLE.items()
+                       if t.applies == 'restart'},
             'readonly': {
                 'bridge_max_linear': self.bridge_max_linear,
                 'bridge_max_angular': self.bridge_max_angular,

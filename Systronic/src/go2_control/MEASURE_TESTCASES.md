@@ -32,9 +32,18 @@ localisation error  หุ่นอยู่ตรงไหนจริง เ�
 เก่าได้ถึง 20 ซม. ซึ่งใหญ่พอ ๆ กับ error ที่จะวัด TF เป็น interpolate ต่อเนื่อง
 `testcase_recorder` อ่านจาก TF ให้แล้ว
 
-**รอบที่จะวัด ให้ลด `update_min_d` กับ `update_min_a` เหลือ 0.05** ใน
-`config/amcl_livox.yaml` **ก่อน launch** ปรับสดไม่ได้ — Foxy อ่านค่าครั้งเดียวตอน
-`on_configure` สั่งทีหลังตอบ success แต่ไม่มีผล เสร็จแล้วค่อยตั้งกลับ
+**รอบที่จะวัด ให้ลด `update_min_d` กับ `update_min_a` เหลือ 0.05**
+ไม่ต้องแก้ yaml และไม่ต้อง relaunch แล้ว
+
+```bash
+ros2 run go2_control reconfigure --node /amcl \
+    --set update_min_d=0.05 --set update_min_a=0.05
+```
+
+หรือจากหน้าเว็บ ถ้า dev panel เสร็จ ทำได้เหมือนกัน ทดสอบกับสแตกจริงแล้ว
+สี่ transition ใช้ 18 มิลลิวินาที และ AMCL คืนตำแหน่งเองผ่าน `save_pose_rate`
+
+**ทำตอนหุ่นจอดเท่านั้น** เสร็จแล้วสั่งกลับเป็น 0.20 / 0.10 ด้วยคำสั่งเดียวกัน
 
 ```yaml
 update_min_d: 0.05      # จาก 0.20 เฉพาะรอบวัด
