@@ -52,6 +52,9 @@ ROS distro:     Foxy
 Read first:
 
 ```text
+src/go2_control/TESTPLAN_TABLE.md              the field sheet: every case on one page
+src/go2_control/ONSITE_SCHEDULE_2026-09-14.md  what fits in the day, and what does not
+src/go2_control/MEASURE_TESTCASES.md           which number each case produces, and from where
 src/go2_control/ONSITE_PLAN.md                 what to do on site, in what order, why
 src/go2_control/RUNBOOK_ONSITE.md              the commands for each of those steps
 src/go2_control/LIVOX_DEPLOYMENT_PLAN.md       how the deployment is meant to work
@@ -139,6 +142,8 @@ config/cyclonedds_unitree_wlan.xml the Unitree bridge's DDS
 go2_control/send_mission.py        send a goal or waypoint list, no RViz needed
 go2_control/record_waypoint.py     write the waypoint files send_mission reads
 go2_control/nav_ready_check.py     is the stack ready for a goal, headless
+go2_control/testcase_recorder.py   run one test case, bag it, print its numbers
+go2_control/reconfigure.py         apply parameters a node only reads at configure
 go2_control/unitree_udp_bridge.py  api / sdk / probe
 go2_control/sensor_watchdog.py     stops on stale sensors
 go2_control/amcl_drift_check.py    measures AMCL against FAST-LIO
@@ -152,13 +157,18 @@ scripts/collect_logs.sh            take the evidence home
 ## Where Things Stand
 
 ```text
-localisation error   0.258 m mean, 0.494 m max over a 33.7 m replayed walk
+localisation error   0.29-0.31 m mean, 0.48-0.54 m max over a 33.7 m replay
+                     measured 2026-09-11 with the alphas now in the config
                      enough for open floor and wide corridors
                      not enough for a 0.9 m doorway or an accurate photo stop
 board CPU            never measured. scripts/measure_board_load.sh is for this
 step 10              api mode never proven on the robot
-camera and upload    not written
-AprilTag             never tested on site
+camera and upload    mission_capture exists, never run on the robot
+AprilTag             never tested on site, and tagPoses / localize arrive
+                     from the web with no code reading them
+battery              nothing reads it, and how long the robot drives on a
+                     charge has never been measured
+low obstacles        anything under 25 cm is invisible - see below
 ```
 
 Parameter tuning is close to exhausted as a route to a lower error. AprilTag is
@@ -176,6 +186,27 @@ Measured on 2026-09-03, two to three runs per condition, in
   Nav2's planner; that is a different need and worth doing separately.
 - **Use the physical mount angle, 13.0/0.0/0.35**, not the 10.26/1.72/0.43
   fitted from the cloud, even against a map built with the fitted values.
+- **The rotational alphas changed on site on 2026-09-07 were right.** Four
+  replays of 02_loop on 2026-09-11, two per condition, interleaved:
+  alpha1/alpha2 at 0.03/0.10 against 0.10/0.4 gave mean 0.29-0.31 against
+  0.42-0.43 and yaw max 3.9-4.6 deg against 8.8. The separation is seven
+  times the within-condition spread. `LIVOX_ALPHA_REPLAY_2026-09-11.md`.
+- **Only four of the fourteen tunable parameters take effect live.** On Foxy
+  the sole node with a parameter callback is dwb_plugins::KinematicsHandler,
+  which holds the speed and acceleration limits. The goal checker, the
+  inflation layer and AMCL all read once and keep their own copies; a set
+  call succeeds, `ros2 param get` returns the new number, and the robot goes
+  on using the old one.
+- **Cycling a node's lifecycle applies those, and is cheap.** deactivate,
+  cleanup, configure, activate took 18 ms on /amcl against a replayed stack,
+  lifecycle_manager did not react, and the pose came back by itself through
+  save_pose_rate. `ros2 run go2_control reconfigure`. Verified for /amcl
+  only - controller_server owns an action server and has not had the test.
+- **A 20 cm obstacle is driven into, and every ramp reads as a wall.** Both
+  follow from asking whether a point is above 0.25 m in base_link rather
+  than above the ground under it. The site has no ramps, confirmed
+  2026-09-11, so `/scan_low` is the whole remaining fix.
+  `GROUND_AND_LOW_OBSTACLES.md`.
 - **Lowering AMCL's alphas does not move the mean, it halves the peak.** That
   is the useful effect: a large correction arrives as a jump, and the jump is
   what makes the controller lurch.
@@ -187,6 +218,14 @@ replay defaults to true on livox_robot.launch.py. A live run without
 replay:=false waits forever for a /clock that never comes.
 
 ros2 bag play has no --clock on Foxy. The bag_clock node supplies it.
+
+livox_mid360_lio.launch.py needs ~/ws_fastlio_livox sourced as well. Without
+it FAST-LIO never starts while AMCL, map_server and the bag all run normally,
+announced only by amcl_drift_check saying it has no odometry - which reads as
+a problem with the bag.
+
+pkill -f kills the shell that invoked it whenever the pattern matches that
+shell's own command line. Keep the patterns in a script file.
 
 FAST-LIO diverges when starved of CPU. It does not slow down: the pose runs
 away to tens of thousands of metres while every process stays alive and every
