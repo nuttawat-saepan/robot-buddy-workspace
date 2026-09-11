@@ -254,8 +254,16 @@ footprint คือสี่เหลี่ยม 0.70 x 0.50 ม. รอบจ�
 
 ## 4. Dev testing panel
 
-ยังไม่มีทางฝั่งหุ่นรองรับ **ต้องเขียนเพิ่มทั้งสองฝั่ง** ฝั่งเรารับคำสั่งปรับค่าผ่าน
-`/missions/control` แล้วเรียก `ros2 param set` ให้
+**ฝั่งหุ่นทำแล้ว** `mqtt_mission_bridge` รับ `get_params` และ `set_params` ทาง
+`/missions/control` แล้วตอบกลับที่ `/missions/params` โปรโตคอลเต็มอยู่ใน
+`WEB_PROMPT.md` ข้อ 4 เหลือแต่ฝั่งเว็บ
+
+ค่า clamp ของ bridge ไม่มีทางอ่านกลับได้ ต้องบอกโหนดผ่าน `BRIDGE_MAX_LINEAR`
+กับ `BRIDGE_MAX_ANGULAR` ใน `onsite.env` **ให้ตรงกับบรรทัดคำสั่งที่รัน bridge จริง**
+ไม่งั้น panel จะรายงานเพดานที่หุ่นไม่มี
+
+AMCL ไม่อยู่ในลิสต์ที่ปรับได้ เพราะ Foxy อ่านค่าครั้งเดียวตอน configure
+สั่งทีหลังตอบ success แต่ไม่มีผล
 
 ค่าที่ควรมีในหน้า panel และผลของการเพิ่ม/ลด อยู่ใน `TUNING_AND_TESTPLAN.md`
 หัวข้อ 4 ทั้งหมด

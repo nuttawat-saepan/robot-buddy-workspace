@@ -21,7 +21,9 @@ web has been seen to work against it.
                               imageTopic, tagPoses,
                               waypoints: [{sequence, x, y, yaw, isCapture,
                                            name}]}
-    in   /missions/control   {action: "pause" | "resume" | "stop"}
+    in   /missions/control   {action: "pause" | "resume" | "stop"
+                                      | "get_params"
+                                      | "set_params", params: {...}}
     out  <statusTopic>       {runId, missionId, status, message}
     out  <progressTopic>     {runId, missionId, progress, currentWaypointIndex,
                               currentWaypointName, message}
@@ -30,6 +32,8 @@ web has been seen to work against it.
     out  /missions/map       {width, height, resolution, origin:{x,y,yaw},
                               image}   - base64 PNG, occupied pixels dark
     out  /missions/pose      {x, y, yaw, frame, timestamp}
+    out  /missions/params    {values, limits, readonly,
+                              clamped_by_bridge, notes, timestamp}
 
 The reply topics are named by the web inside the mission payload rather than
 being fixed here, which is how main.py works and is worth keeping: one robot
@@ -60,6 +64,70 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 import tf2_ros
+
+
+# --------------------------------------------------------- live parameters
+
+# The eight values the web may change while the robot is running, each mapped
+# to the node that owns it and its full parameter name.
+#
+# Every one of these is read by its node on the cycle it is used, so a set
+# call takes effect on the next control period with nothing to restart.
+#
+# AMCL's parameters are deliberately absent, and the absence is the point.
+# Foxy's nav2_amcl reads update_min_d, min_particles, laser_max_range and the
+# rest once, in on_configure, into its own members - a set call afterwards
+# returns success and changes nothing. A panel offering them would lie in
+# exactly the way the bridge clamp lied on site on 2026-09-07. Changing them
+# means editing the yaml and taking AMCL through the lifecycle again, which
+# also throws away the pose estimate, so it is not a slider.
+TUNABLE = {
+    'max_vel_x': ('/controller_server', 'FollowPath.max_vel_x'),
+    'max_vel_theta': ('/controller_server', 'FollowPath.max_vel_theta'),
+    'acc_lim_x': ('/controller_server', 'FollowPath.acc_lim_x'),
+    'acc_lim_theta': ('/controller_server', 'FollowPath.acc_lim_theta'),
+    'xy_goal_tolerance': ('/controller_server',
+                          'goal_checker.xy_goal_tolerance'),
+    'yaw_goal_tolerance': ('/controller_server',
+                           'goal_checker.yaw_goal_tolerance'),
+    'inflation_radius': ('/local_costmap/local_costmap',
+                         'inflation_layer.inflation_radius'),
+    'cost_scaling_factor': ('/local_costmap/local_costmap',
+                            'inflation_layer.cost_scaling_factor'),
+}
+
+# Bounds that are not a matter of taste. A request outside them is clamped
+# and the reply says so, rather than being refused silently or accepted into
+# a robot that then behaves badly.
+#
+#   xy_goal_tolerance   0.35 is the floor because localisation is 0.258 m
+#                       mean and 0.494 m worst over the measured walk. At
+#                       0.25 the robot circled a waypoint it had reached for
+#                       ten seconds and needed a recovery. This floor drops
+#                       when AprilTag lowers the error, not before.
+#   max_vel_theta       under 0.2 the wheel base may not turn at all.
+#   acc_lim_x           under 0.2 DWB re-plans before the robot has reached
+#                       the speed it asked for.
+LIMITS = {
+    'max_vel_x': (0.05, 0.60),
+    'max_vel_theta': (0.20, 0.80),
+    'acc_lim_x': (0.20, 1.00),
+    'acc_lim_theta': (0.20, 1.50),
+    'xy_goal_tolerance': (0.35, 1.00),
+    'yaw_goal_tolerance': (0.10, 1.00),
+    'inflation_radius': (0.10, 1.00),
+    'cost_scaling_factor': (1.0, 10.0),
+}
+
+
+def _clamp(name, value):
+    """Return (value, note) with value forced inside LIMITS[name]."""
+    low, high = LIMITS[name]
+    if value < low:
+        return low, '%s raised to the floor %s' % (name, low)
+    if value > high:
+        return high, '%s lowered to the ceiling %s' % (name, high)
+    return value, None
 
 
 def yaw_to_quaternion(yaw):
@@ -98,6 +166,24 @@ class MqttMissionBridge(Node):
         self.map_period = float(
             self.declare_parameter('map_period', 30.0).value)
 
+        # What unitree_udp_bridge was started with. It is a separate process
+        # on a separate DDS domain and its clamp is a command line argument,
+        # not a ROS parameter, so nothing can read it back - this node has to
+        # be told. Set both from onsite.env, from the same values the bridge
+        # command line uses, or the panel reports a ceiling the robot does
+        # not have. On 2026-09-07 Nav2 was set to 0.40 while the bridge cut
+        # at 0.25 and no part of the system said so; the robot simply ran
+        # slower than every number on screen.
+        self.bridge_max_linear = float(self.declare_parameter(
+            'bridge_max_linear',
+            float(os.environ.get('BRIDGE_MAX_LINEAR', 0.45))).value)
+        self.bridge_max_angular = float(self.declare_parameter(
+            'bridge_max_angular',
+            float(os.environ.get('BRIDGE_MAX_ANGULAR', 0.60))).value)
+
+        self.params_topic = self.declare_parameter(
+            'params_topic', '/missions/params').value
+
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
@@ -117,6 +203,18 @@ class MqttMissionBridge(Node):
         self.stopping = False
         self.goal_handle = None
         self.worker = None
+
+        # Made here rather than on demand: the MQTT thread is the only
+        # caller and a client created from it, after rclpy.spin has the
+        # executor, is not picked up until something else wakes it.
+        from rcl_interfaces.srv import GetParameters, SetParameters
+        self._get_cli = {}
+        self._set_cli = {}
+        for node_name in sorted({n for n, _ in TUNABLE.values()}):
+            self._get_cli[node_name] = self.create_client(
+                GetParameters, node_name + '/get_parameters')
+            self._set_cli[node_name] = self.create_client(
+                SetParameters, node_name + '/set_parameters')
 
         self.mqtt = None
         self._connect_mqtt()
@@ -164,6 +262,9 @@ class MqttMissionBridge(Node):
         self.get_logger().info('MQTT connected rc=%s' % rc)
         client.subscribe('/missions/start')
         client.subscribe('/missions/control')
+        # A page opened after the robot has been up would otherwise show
+        # empty sliders until someone pressed something.
+        self._publish_params()
 
     def _publish(self, topic, payload):
         if not topic or self.mqtt is None:
@@ -185,9 +286,10 @@ class MqttMissionBridge(Node):
         if msg.topic == '/missions/start':
             self._start_mission(data)
         elif msg.topic == '/missions/control':
-            self._control(data.get('action', ''))
+            self._control(data)
 
-    def _control(self, action):
+    def _control(self, data):
+        action = data.get('action', '')
         if action == 'pause':
             self.paused = True
             self._cancel_current()
@@ -200,6 +302,135 @@ class MqttMissionBridge(Node):
             self.paused = False
             self._cancel_current()
             self.get_logger().warn('stopped by the web')
+        elif action == 'get_params':
+            self._publish_params()
+        elif action == 'set_params':
+            self._set_params(data.get('params') or {})
+        else:
+            self.get_logger().warn('unknown control action %r' % action)
+
+    # ----------------------------------------------------------- parameters
+
+    def _wait(self, future, timeout=3.0):
+        """Wait for a service future from the MQTT thread.
+
+        The executor runs in the main thread and resolves the future there,
+        so this only watches the clock. It must never spin: two threads
+        spinning one node is how the mission thread used to deadlock.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if future.done():
+                return future.result()
+            time.sleep(0.02)
+        return None
+
+    def _read_params(self):
+        """Current value of every tunable, by asking the node that owns it.
+
+        Read back from the nodes rather than remembered here, because a
+        value this node set is not proof of the value the controller is
+        using - the yaml, a relaunch or send_mission can all have moved it.
+        """
+        from rcl_interfaces.srv import GetParameters
+        values = {}
+        for node_name, cli in self._get_cli.items():
+            names = [full for key, (owner, full) in TUNABLE.items()
+                     if owner == node_name]
+            keys = [key for key, (owner, _) in TUNABLE.items()
+                    if owner == node_name]
+            if not cli.service_is_ready():
+                self.get_logger().warn(
+                    '%s is not up - its parameters are reported as unknown'
+                    % node_name)
+                continue
+            req = GetParameters.Request()
+            req.names = names
+            res = self._wait(cli.call_async(req))
+            if res is None or len(res.values) != len(keys):
+                self.get_logger().warn('no reply from %s' % node_name)
+                continue
+            for key, value in zip(keys, res.values):
+                values[key] = value.double_value
+        return values
+
+    def _set_params(self, requested):
+        """Apply what the web asked for, clamped, and report what happened."""
+        from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+        from rcl_interfaces.srv import SetParameters
+
+        notes = []
+        by_node = {}
+        for key, raw in requested.items():
+            if key not in TUNABLE:
+                notes.append('%s is not adjustable and was ignored' % key)
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                notes.append('%s was not a number and was ignored' % key)
+                continue
+            value, note = _clamp(key, value)
+            if note:
+                notes.append(note)
+            node_name, full = TUNABLE[key]
+            param = Parameter()
+            param.name = full
+            param.value = ParameterValue()
+            param.value.type = ParameterType.PARAMETER_DOUBLE
+            param.value.double_value = value
+            by_node.setdefault(node_name, []).append(param)
+
+        for node_name, params in by_node.items():
+            cli = self._set_cli[node_name]
+            if not cli.service_is_ready():
+                notes.append('%s is not up - nothing was changed there'
+                             % node_name)
+                continue
+            req = SetParameters.Request()
+            req.parameters = params
+            res = self._wait(cli.call_async(req))
+            if res is None:
+                notes.append('%s did not answer within 3s' % node_name)
+                continue
+            for param, result in zip(params, res.results):
+                if not result.successful:
+                    notes.append('%s refused: %s' % (
+                        param.name, result.reason or 'no reason given'))
+
+        for note in notes:
+            self.get_logger().warn(note)
+        # Always answer with what the nodes hold now, not with what was
+        # asked for. The web must draw the robot's values, never its own.
+        self._publish_params(notes)
+
+    def _publish_params(self, notes=None):
+        values = self._read_params()
+        effective = min(values.get('max_vel_x', self.bridge_max_linear),
+                        self.bridge_max_linear)
+        effective_ang = min(
+            values.get('max_vel_theta', self.bridge_max_angular),
+            self.bridge_max_angular)
+        payload = {
+            'values': values,
+            'limits': {k: {'min': lo, 'max': hi}
+                       for k, (lo, hi) in LIMITS.items()},
+            'readonly': {
+                'bridge_max_linear': self.bridge_max_linear,
+                'bridge_max_angular': self.bridge_max_angular,
+                'effective_max_linear': effective,
+                'effective_max_angular': effective_ang,
+            },
+            # True when Nav2 is set above what the bridge will pass. The
+            # robot then runs at the bridge's number and every Nav2 reading
+            # on the panel is wrong. The web is expected to show this.
+            'clamped_by_bridge': (
+                values.get('max_vel_x', 0.0) > self.bridge_max_linear
+                or values.get('max_vel_theta', 0.0) > self.bridge_max_angular),
+            'notes': notes or [],
+            'timestamp': int(time.time()),
+        }
+        self._publish(self.params_topic, payload)
 
     def _cancel_current(self):
         handle = self.goal_handle
