@@ -107,6 +107,7 @@ setup(
         'pcd_to_map = go2_control.pcd_to_map:main',
         'livox_grid_map = go2_control.livox_grid_map:main',
         'amcl_drift_check = go2_control.amcl_drift_check:main',
+        'testcase_recorder = go2_control.testcase_recorder:main',
         'bag_clock = go2_control.bag_clock:main',
         'lio_odom_relay = go2_control.lio_odom_relay:main',
         'sensor_watchdog = go2_control.sensor_watchdog:main',

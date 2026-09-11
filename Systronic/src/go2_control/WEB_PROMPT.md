@@ -74,71 +74,31 @@ subscribe topic `/missions/pose` — ส่งทุก 1 วินาที
 
 ## 4 · Dev testing panel
 
-ฝั่งหุ่นรองรับแล้ว ทดสอบ round-trip ผ่านแล้ว ทำ FE ได้เลย
+ข้อนี้ต้องเขียนเพิ่มทั้งสองฝั่ง ฝั่งหุ่นยังไม่รองรับ ให้ทำ UI ไว้ก่อนได้
 
 ```text
-ทำ dev testing panel ปรับค่า Nav2 สดจากหน้าเว็บ ฝั่งหุ่นรองรับแล้ว
-คุยผ่าน MQTT over websocket เหมือนส่วนอื่น
+ทำ panel ปรับค่า Nav2 สดจากหน้าเว็บ ส่งคำสั่งไปทาง MQTT topic
+`/missions/control` ฝั่งหุ่นจะเรียก ros2 param set ให้
 
-ขอค่าปัจจุบัน  publish ไป `/missions/control`
+ค่าที่ต้องมี
 
-  {"action":"get_params"}
+  max_vel_x, max_vel_theta, acc_lim_x, acc_lim_theta
+  xy_goal_tolerance, yaw_goal_tolerance
+  inflation_radius, cost_scaling_factor
 
-สั่งปรับ       publish ไป `/missions/control`
+สองเรื่องที่ panel ต้องกันไว้ ไม่ใช่แค่หมายเหตุ
 
-  {"action":"set_params","params":{"max_vel_x":0.35,"inflation_radius":0.40}}
+  xy_goal_tolerance ห้ามต่ำกว่า 0.35 เมตร ค่านี้ถูกกำหนดด้วยค่าคลาดของ
+  localisation ที่วัดได้ 0.258 เมตร ไม่ใช่ความชอบ ตั้งต่ำกว่านี้หุ่นจะวนรอบ
+  จุดหมายที่ไปถึงแล้วไม่จบ ให้ panel กันไว้และอธิบายเหตุผลตรงนั้น
 
-  ส่งเฉพาะตัวที่จะเปลี่ยนก็ได้ ไม่ต้องส่งครบทุกตัว
-
-หุ่นตอบกลับที่ `/missions/params` ทุกครั้งที่ get หรือ set และตอนเชื่อมต่อใหม่
-
-  {"values": {"max_vel_x":0.35, ...},
-   "limits": {"max_vel_x":{"min":0.05,"max":0.60}, ...},
-   "readonly": {"bridge_max_linear":0.45, "bridge_max_angular":0.60,
-                "effective_max_linear":0.35, "effective_max_angular":0.35},
-   "clamped_by_bridge": false,
-   "notes": ["xy_goal_tolerance raised to the floor 0.35"],
-   "timestamp": 1789095636}
-
-ตัวที่ปรับได้ แปดตัว ทุกตัวเป็น double
-
-  Motion    max_vel_x  max_vel_theta  acc_lim_x  acc_lim_theta
-  Goal      xy_goal_tolerance  yaw_goal_tolerance
-  Costmap   inflation_radius  cost_scaling_factor
-
-Safety อ่านอย่างเดียว สามตัว อยู่ใน `readonly`
-
-  bridge_max_linear  bridge_max_angular  effective_max_linear
-
-ข้อบังคับของ FE
-
-1. ช่วงของ slider ต้องอ่านจาก `limits` ที่หุ่นส่งมา ห้าม hardcode
-   หุ่นเป็นเจ้าของขอบเขต ไม่ใช่หน้าเว็บ
-
-2. หลัง set เสร็จ ให้วาดค่าจาก `values` ที่ตอบกลับมาเสมอ ห้ามวาดค่าที่ผู้ใช้พิมพ์
-   หุ่นอาจ clamp ค่าให้ และถ้าวาดค่าที่พิมพ์ panel จะแสดงเลขที่หุ่นไม่ได้ใช้
-
-3. `notes` ต้องแสดงให้เห็น ไม่ใช่ทิ้ง เป็นที่เดียวที่บอกว่าทำไมค่าที่ตั้งไม่ตรงที่ขอ
-   เช่นถูก clamp หรือโหนดยังไม่ขึ้น
-
-4. ถ้าตัวไหนไม่มีใน `values` แปลว่าโหนดนั้นยังไม่ขึ้น ให้แสดงว่าไม่มีข้อมูล
-   และ disable slider ตัวนั้น ห้ามแสดง 0
-
-5. `clamped_by_bridge` เป็น true เมื่อ Nav2 ถูกตั้งสูงกว่าที่ bridge ยอมปล่อย
-   ต้องขึ้นเตือนให้เห็นชัด พร้อมบอกว่าความเร็วจริงคือ effective_max_linear
-   วันที่ 7 Nav2 ตั้ง 0.40 ขณะ bridge ตัดที่ 0.25 และไม่มีอะไรในระบบบอกเลย
-   หุ่นแค่วิ่งช้ากว่าทุกเลขบนหน้าจอ นี่คือเหตุผลที่มีฟิลด์นี้
-
-6. ค่า bridge สองตัวปรับจากเว็บไม่ได้ ต้องรีสตาร์ท process ให้แสดงเป็นอ่านอย่างเดียว
-   วางไว้ข้าง max_vel_x ให้เห็นคู่กัน
-
-7. xy_goal_tolerance มีพื้นที่ 0.35 ม. ซึ่งมาจากค่าคลาด localisation 0.258 ม.
-   ไม่ใช่ความชอบ หุ่นจะดันขึ้นให้เองถ้าตั้งต่ำกว่า panel ควรอธิบายเหตุผลตรงนั้น
-
-ไม่มีกลุ่ม AMCL ในรอบนี้ AMCL บน Foxy อ่านพารามิเตอร์ครั้งเดียวตอน configure
-สั่งเปลี่ยนทีหลังจะตอบ success แต่ไม่มีผลจริง ซึ่งเป็นการโกหกแบบเดียวกับข้อ 5
-ถ้าจะทำต้องเป็นปุ่มรีสตาร์ท AMCL ทั้งตัว และต้องตั้ง initial pose ใหม่
+  ความเร็วสูงสุดจริงถูกตัดอีกชั้นที่ unitree_udp_bridge ด้วย --max-linear และ
+  --max-angular ซึ่งไม่ใช่ ROS parameter ปรับสดไม่ได้ ต้องรีสตาร์ท และการตัด
+  ของมันชนะ Nav2 เสมอ panel ต้องแสดงค่าสองตัวนี้ไว้ข้าง max_vel_x ให้เห็น
+  ไม่งั้นจะตั้ง Nav2 ไว้ 0.40 แล้วงงว่าทำไมหุ่นวิ่ง 0.25 ซึ่งเกิดขึ้นมาแล้วหน้างาน
 ```
+
+---
 
 ## 5 · โหมด
 
