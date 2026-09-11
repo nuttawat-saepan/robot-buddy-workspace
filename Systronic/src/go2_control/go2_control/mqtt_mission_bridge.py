@@ -23,7 +23,8 @@ web has been seen to work against it.
                                            name}]}
     in   /missions/control   {action: "pause" | "resume" | "stop"
                                       | "get_state" | "get_params"
-                                      | "set_params", params: {...}}
+                                      | "set_params", params: {...},
+                                        restart: bool}
     out  <statusTopic>       {runId, missionId, status, message}
     out  <progressTopic>     {runId, missionId, progress, currentWaypointIndex,
                               currentWaypointName, message}
@@ -223,6 +224,7 @@ class MqttMissionBridge(Node):
         # Made here rather than on demand: the MQTT thread is the only
         # caller and a client created from it, after rclpy.spin has the
         # executor, is not picked up until something else wakes it.
+        from lifecycle_msgs.srv import ChangeState
         from rcl_interfaces.srv import GetParameters, SetParameters
         self._get_cli = {}
         self._set_cli = {}
@@ -231,6 +233,13 @@ class MqttMissionBridge(Node):
                 GetParameters, node_name + '/get_parameters')
             self._set_cli[node_name] = self.create_client(
                 SetParameters, node_name + '/set_parameters')
+        # Every restart parameter is owned by controller_server, directly or
+        # through the local costmap it constructs, so one node takes them
+        # all. The costmap is not cycled on its own: its lifecycle is driven
+        # by the controller, and transitioning it from outside would leave
+        # the two disagreeing about what state it is in.
+        self._cycle_cli = self.create_client(
+            ChangeState, '/controller_server/change_state')
 
         self.mqtt = None
         self._connect_mqtt()
@@ -323,7 +332,8 @@ class MqttMissionBridge(Node):
         elif action == 'get_params':
             self._publish_params()
         elif action == 'set_params':
-            self._set_params(data.get('params') or {})
+            self._set_params(data.get('params') or {},
+                             restart=bool(data.get('restart')))
         else:
             self.get_logger().warn('unknown control action %r' % action)
 
@@ -409,7 +419,54 @@ class MqttMissionBridge(Node):
                 values[key] = value.double_value
         return values
 
-    def _set_params(self, requested):
+    def _cycle_controller(self):
+        """Take controller_server round its lifecycle so it re-reads.
+
+        The goal checker's tolerances and the inflation layer's radius are
+        read once, at configure and at onInitialize, into members that
+        nothing updates afterwards. This is the cheap way to make them take
+        effect: verified against /amcl on a replayed stack on 2026-09-11,
+        where the four transitions took 18 ms and lifecycle_manager did not
+        react at all - no bond break, no restart of the managed set.
+
+        **The same check has not been run against controller_server.** AMCL
+        is a leaf; the controller owns a costmap and an action server, and a
+        client mid-goal when this happens is a case nothing here has seen.
+        That is why a running mission is refused rather than paused.
+        """
+        from lifecycle_msgs.msg import Transition
+        from lifecycle_msgs.srv import ChangeState
+
+        if self.mission is not None and not self.stopping:
+            return ['a mission is running - refusing to cycle '
+                    'controller_server. Stop the mission first.']
+        if not self._cycle_cli.service_is_ready():
+            return ['/controller_server is not up - nothing was cycled']
+
+        notes = []
+        for label, transition in (
+                ('deactivate', Transition.TRANSITION_DEACTIVATE),
+                ('cleanup', Transition.TRANSITION_CLEANUP),
+                ('configure', Transition.TRANSITION_CONFIGURE),
+                ('activate', Transition.TRANSITION_ACTIVATE)):
+            req = ChangeState.Request()
+            req.transition = Transition(id=transition)
+            res = self._wait(self._cycle_cli.call_async(req), timeout=15.0)
+            if res is None or not res.success:
+                # Half a cycle is worse than none: the controller is left
+                # inactive and will not drive until someone finishes the
+                # sequence by hand. Say so rather than reporting a number.
+                notes.append(
+                    'controller_server %s FAILED - it is not active and the '
+                    'robot cannot be driven until it is brought back' % label)
+                self.get_logger().error(notes[-1])
+                return notes
+        notes.append('controller_server cycled - the restart values are now '
+                     'in use')
+        self.get_logger().warn(notes[-1])
+        return notes
+
+    def _set_params(self, requested, restart=False):
         """Apply what the web asked for, clamped, and report what happened."""
         from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
         from rcl_interfaces.srv import SetParameters
@@ -455,10 +512,14 @@ class MqttMissionBridge(Node):
 
         stale = sorted({k for k in requested
                         if k in TUNABLE and TUNABLE[k][2] == 'restart'})
-        if stale:
+        if stale and not restart:
             notes.append(
-                'stored but NOT in use until the stack is relaunched: %s'
+                'stored but NOT in use until controller_server is cycled: %s'
                 % ', '.join(stale))
+        elif stale and restart:
+            notes.extend(self._cycle_controller())
+        elif restart and not stale:
+            notes.append('nothing asked for needed a restart - not cycling')
 
         for note in notes:
             self.get_logger().warn(note)
