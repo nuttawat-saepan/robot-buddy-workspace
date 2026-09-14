@@ -134,8 +134,16 @@ fi
 
 echo
 echo "== checking what the board is missing"
+# The two out-of-tree workspaces are sourced as well. Without them this check
+# reported livox_ros_driver2 and fast_lio_livox as MISSING on a board that had
+# both - they do not live under /opt/ros, and a false MISSING here sends
+# someone rebuilding a driver at the start of a field day. Same trap as
+# livox_mid360_lio.launch.py needing ~/ws_fastlio_livox to start FAST-LIO.
 ssh "$TARGET" "bash -lc '
     source /opt/ros/foxy/setup.bash
+    for ws in ~/ws_livox ~/ws_fastlio_livox; do
+        [ -f \$ws/install/setup.bash ] && source \$ws/install/setup.bash
+    done
     for p in livox_ros_driver2 fast_lio_livox pointcloud_to_laserscan nav2_amcl; do
         if ros2 pkg prefix \$p >/dev/null 2>&1; then
             echo \"  ok       \$p\"
