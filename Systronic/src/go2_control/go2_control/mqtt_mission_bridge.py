@@ -20,6 +20,7 @@ web has been seen to work against it.
     in   /missions/start     {missionId, runId, statusTopic, progressTopic,
                               imageTopic, tagPoses,
                               waypoints: [{sequence, x, y, yaw, isCapture,
+                                           captureViews,
                                            name}]}
     in   /missions/control   {action: "pause" | "resume" | "stop"
                                       | "get_state" | "get_params"
@@ -207,6 +208,9 @@ class MqttMissionBridge(Node):
         # robot is still settling, and a photograph taken then is smeared.
         self.capture_settle = float(
             self.declare_parameter('capture_settle', 3.0).value)
+        # Photographs per capture point, turning in place between them.
+        # 1 is the original behaviour. Overridden per waypoint by captureViews.
+        self.declare_parameter('capture_views', 1)
         self.capture_timeout = float(
             self.declare_parameter('capture_timeout', 20.0).value)
         self.pose_period = float(
@@ -762,10 +766,58 @@ class MqttMissionBridge(Node):
                 return
 
             if wp.get('isCapture'):
-                self._progress(index, name, int((index + 1) * 100 / total),
-                               'Photographing %s' % name)
-                time.sleep(self.capture_settle)
-                self._capture(name)
+                # One photograph facing the waypoint's yaw, or several turning
+                # round in place: captureViews on the waypoint, else the
+                # capture_views parameter, which is read here each time and so
+                # can be changed with ros2 param set between missions. 4 is a
+                # photograph every 90 degrees.
+                #
+                # Turned in steps rather than one sweep because each step is an
+                # ordinary Nav2 goal at the same x, y - it finishes, settles and
+                # photographs before the next - and because a turn that loses
+                # localisation part-way loses one step, not the whole circle.
+                try:
+                    views = int(wp.get('captureViews')
+                                or self.get_parameter('capture_views').value
+                                or 1)
+                except (TypeError, ValueError):
+                    views = 1
+                views = max(1, min(views, 12))
+                base_yaw = float(wp.get('yaw', 0.0))
+
+                for k in range(views):
+                    if self.stopping:
+                        self._status('CANCELLED', 'Stopped by operator')
+                        return
+                    while self.paused and not self.stopping:
+                        time.sleep(0.2)
+                    label = name if views == 1 else '%s_%d' % (name, k + 1)
+
+                    if k > 0:
+                        turned = dict(wp)
+                        yaw = base_yaw + k * 2.0 * math.pi / views
+                        turned['yaw'] = math.atan2(math.sin(yaw), math.cos(yaw))
+                        self._progress(index, name,
+                                       int((index + 1) * 100 / total),
+                                       'Turning to view %d of %d at %s'
+                                       % (k + 1, views, name))
+                        if not self._go_to(turned):
+                            if self.stopping:
+                                self._status('CANCELLED', 'Stopped by operator')
+                                return
+                            # A view that cannot be reached is skipped rather
+                            # than failing the mission: the other photographs
+                            # and the rest of the route are still worth having.
+                            self._progress(index, name,
+                                           int((index + 1) * 100 / total),
+                                           'Could not turn to view %d at %s - '
+                                           'skipped' % (k + 1, name))
+                            continue
+
+                    self._progress(index, name, int((index + 1) * 100 / total),
+                                   'Photographing %s' % label)
+                    time.sleep(self.capture_settle)
+                    self._capture(label)
 
         self._progress(total - 1, waypoints[-1].get('name', ''), 100,
                        'Finish: progress = 100')
