@@ -81,6 +81,19 @@ def generate_launch_description():
             'replay': arg('replay'),
             'map': arg('map'),
             'enable_rviz': 'false',
+            # Passed explicitly, and it must be. livox_robot.launch.py is
+            # included first and declares a cmd_vel_topic of its own, meaning
+            # the watchdog's *output*, /cmd_vel_safe. That value lands in the
+            # shared launch context, and DeclareLaunchArgument only supplies a
+            # default when the name is unset - so livox_ground's own default
+            # of /cmd_vel_nav_preview never applied and Nav2 published
+            # straight to /cmd_vel_safe.
+            #
+            # The effect was that sensor_watchdog sat subscribed to a topic
+            # nobody wrote to while Nav2 talked directly to the relay: no
+            # stale-sensor cut anywhere in the path to the legs. Found on site
+            # on 2026-09-14 by nav_ready_check refusing to send a goal.
+            'cmd_vel_topic': '/cmd_vel_nav_preview',
         }.items(),
     )
 

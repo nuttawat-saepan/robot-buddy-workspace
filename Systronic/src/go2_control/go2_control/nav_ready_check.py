@@ -208,8 +208,14 @@ class NavReadyCheck(Node):
         else:
             ok = False
             lines.append(('controller', 'FAIL',
-                          f'nothing publishes {self.cmd_topic} - '
-                          f'controller_server is not active'))
+                          f'nothing publishes {self.cmd_topic}. Either '
+                          f'controller_server is not active, or it is active '
+                          f'and remapped somewhere else - check '
+                          f'"ros2 node info /controller_server". On '
+                          f'2026-09-14 it was the second: Nav2 published '
+                          f'straight to /cmd_vel_safe, past the watchdog, '
+                          f'because two included launch files share the name '
+                          f'cmd_vel_topic'))
 
         return ok, lines
 
