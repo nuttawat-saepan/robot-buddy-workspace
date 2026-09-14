@@ -109,6 +109,7 @@ setup(
         'amcl_drift_check = go2_control.amcl_drift_check:main',
         'testcase_recorder = go2_control.testcase_recorder:main',
         'reconfigure = go2_control.reconfigure:main',
+        'map_from_bag = go2_control.map_from_bag:main',
         'bag_clock = go2_control.bag_clock:main',
         'lio_odom_relay = go2_control.lio_odom_relay:main',
         'sensor_watchdog = go2_control.sensor_watchdog:main',
