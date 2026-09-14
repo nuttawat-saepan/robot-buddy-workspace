@@ -95,7 +95,7 @@ echo "robot environment ready"
 echo "  RMW              $RMW_IMPLEMENTATION"
 echo "  ROS_DOMAIN_ID    ${ROS_DOMAIN_ID:-0}"
 echo "  interface        ${ROBOT_NET_IF:-wlan0}   (the bridge names its own, separately)"
-echo "  mount            pitch ${LIO_PITCH_DEG:-13.0} roll ${LIO_ROLL_DEG:-0.0} height ${SENSOR_HEIGHT:-0.35}"
+echo "  mount            pitch ${LIO_PITCH_DEG:-13.0} roll ${LIO_ROLL_DEG:-0.0} height ${SENSOR_HEIGHT:-0.35} sensor_x ${LIO_SENSOR_X:-0.0}"
 echo
 echo "  launch:  ros2 launch go2_control livox_robot.launch.py replay:=false \\"
 echo "               lio_pitch_deg:=${LIO_PITCH_DEG:-13.0} lio_roll_deg:=${LIO_ROLL_DEG:-0.0} \\"

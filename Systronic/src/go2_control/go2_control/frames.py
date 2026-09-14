@@ -47,7 +47,7 @@ def to_ypr(m):
     return yaw, pitch, roll
 
 
-def lio_bridges(pitch_deg, roll_deg, sensor_height):
+def lio_bridges(pitch_deg, roll_deg, sensor_height, sensor_x=None):
     """The two static transforms, ready for static_transform_publisher.
 
     Returns (odom_to_camera_init, body_to_base_link), each as
@@ -55,14 +55,36 @@ def lio_bridges(pitch_deg, roll_deg, sensor_height):
 
     camera_init sits where the sensor started, which is what odom means, so the
     first transform is a pure rotation. The second undoes the tilt and then
-    drops to the floor; the drop is a vector in the levelled frame, so it has
-    to be rotated into `body` before it can be used as a translation there.
+    moves from the sensor to the robot's centre: down to the floor, and back
+    along the robot's forward axis by sensor_x. That offset is a vector in the
+    levelled frame, so it has to be rotated into `body` before it can be used
+    as a translation there.
+
+    sensor_x is how far the sensor sits ahead of the point the robot turns
+    about. Until 2026-09-14 it was not modelled at all, so base_link sat
+    directly under the Mid-360 instead of at the centre of the wheels. A turn
+    in place then moved base_link round a circle: on site a 55 degree turn by
+    hand showed 0.33 m of apparent travel, which fits an offset of 0.30 m, and
+    a 180 degree turn would read as 0.6 m. That is larger than
+    xy_goal_tolerance, so every goal that ended in a turn left the position
+    tolerance while it turned and never finished.
+
+    When not given it comes from LIO_SENSOR_X, defaulting to 0.0 - which is the
+    old behaviour, so replays of bags and maps built before this are
+    unchanged unless the variable is set. Setting it back to 0 is the revert.
     """
+    if sensor_x is None:
+        import os
+        sensor_x = float(os.environ.get('LIO_SENSOR_X', '0.0') or 0.0)
+    sensor_x = float(sensor_x)
+
     rot = level_rotation(math.radians(pitch_deg), math.radians(roll_deg))
     inv = transpose(rot)
 
     odom_ypr = to_ypr(rot)
     body_ypr = to_ypr(inv)
-    body_xyz = tuple(inv[i][2] * (-sensor_height) for i in range(3))
+    offset = (-sensor_x, 0.0, -sensor_height)
+    body_xyz = tuple(sum(inv[i][k] * offset[k] for k in range(3))
+                     for i in range(3))
 
     return ((0.0, 0.0, 0.0) + odom_ypr, body_xyz + body_ypr)
