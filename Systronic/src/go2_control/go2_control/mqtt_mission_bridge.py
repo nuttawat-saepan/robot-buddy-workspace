@@ -27,7 +27,10 @@ web has been seen to work against it.
                                         restart: bool}
     out  <statusTopic>       {runId, missionId, status, message}
     out  <progressTopic>     {runId, missionId, progress, currentWaypointIndex,
-                              currentWaypointName, message}
+                              currentWaypointName, message,
+                              live: {distanceRemaining, navigationTime,
+                                     recoveries, yawDeg, yawTargetDeg,
+                                     yawErrorDeg}}
     out  <imageTopic>        {runId, missionId, waypointName, takenAt, pose,
                               image}   - image is base64 JPEG
     out  /missions/map       {width, height, resolution, origin:{x,y,yaw},
@@ -56,6 +59,7 @@ watchdog and the bridge exactly as a goal from send_mission does.
 import base64
 import collections
 import json
+import math
 import os
 import threading
 import time
@@ -258,6 +262,8 @@ class MqttMissionBridge(Node):
         self.stopping = False
         self.last_status = None
         self.last_progress = None
+        self._last_feedback = 0.0
+        self._live_goal_yaw = None
         self.goal_handle = None
         self.worker = None
 
@@ -764,7 +770,16 @@ class MqttMissionBridge(Node):
         pose.pose.orientation.w = w
         goal.pose = pose
 
-        send = self.nav.send_goal_async(goal)
+        # Nav2's feedback is the only place the distance remaining and the
+        # recovery count exist, and the web had neither - a mission that was
+        # circling a waypoint it could not finish looked, on the web, exactly
+        # like one walking normally. The heading is added here because Nav2
+        # does not report it at all, and on 2026-09-14 every failure to
+        # finish a goal turned out to be the heading rather than the
+        # position.
+        self._live_goal_yaw = float(wp.get('yaw', 0.0))
+        send = self.nav.send_goal_async(
+            goal, feedback_callback=self._on_nav_feedback)
         while not send.done() and rclpy.ok():
             time.sleep(0.05)
         handle = send.result()
@@ -778,6 +793,48 @@ class MqttMissionBridge(Node):
         self.goal_handle = None
         result = result_future.result()
         return result is not None and result.status == GoalStatus.STATUS_SUCCEEDED
+
+    def _on_nav_feedback(self, msg):
+        """Forward Nav2's per-goal numbers to the web, once a second."""
+        now = time.monotonic()
+        if now - self._last_feedback < 1.0:
+            return
+        self._last_feedback = now
+        fb = msg.feedback
+
+        live = {
+            'distanceRemaining': round(float(fb.distance_remaining), 3),
+            'navigationTime': int(fb.navigation_time.sec),
+            'recoveries': int(fb.number_of_recoveries),
+        }
+
+        yaw = self._current_yaw()
+        if yaw is not None and self._live_goal_yaw is not None:
+            err = math.atan2(math.sin(self._live_goal_yaw - yaw),
+                             math.cos(self._live_goal_yaw - yaw))
+            live.update({
+                'yawDeg': round(math.degrees(yaw), 2),
+                'yawTargetDeg': round(math.degrees(self._live_goal_yaw), 2),
+                'yawErrorDeg': round(math.degrees(err), 2),
+            })
+
+        m = self.mission or {}
+        payload = dict(self.last_progress or {})
+        payload.update({'runId': m.get('runId'),
+                        'missionId': m.get('missionId'),
+                        'live': live})
+        self.last_progress = payload
+        self._publish(m.get('progressTopic'), payload)
+
+    def _current_yaw(self):
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                self.frame, self.base_frame, rclpy.time.Time())
+        except Exception:                          # noqa: BLE001
+            return None
+        q = tf.transform.rotation
+        return math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                          1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
     # ----------------------------------------------------------- capture
 

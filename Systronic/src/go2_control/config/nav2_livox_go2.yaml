@@ -76,9 +76,14 @@ bt_navigator:
 
 controller_server:
   ros__parameters:
-    # 5 Hz against the 10 Hz scan. Raising this does not buy anything: the
-    # costmap cannot update faster than the sensor.
-    controller_frequency: 5.0
+    # Raised from 5.0 on site 2026-09-14. The earlier note here said raising
+    # it buys nothing because the costmap cannot update faster than the 10 Hz
+    # scan - true for obstacles, not for stopping. The goal checker and
+    # RotateToGoal act on the pose from TF, and at 5 Hz the robot turned a
+    # further 3-4 degrees and drove a further 8 cm between decisions, which
+    # showed up as heading overshoot at every goal. Watch board CPU when this
+    # runs; FAST-LIO diverges when starved rather than slowing down.
+    controller_frequency: 10.0
     min_x_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.5
