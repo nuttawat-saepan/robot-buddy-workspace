@@ -202,8 +202,12 @@ local_costmap:
           # sensor: treating those beams as valid would clear real obstacles
           # out of the costmap several times a second.
           inf_is_valid: false
-          obstacle_max_range: 6.0
-          raytrace_max_range: 7.0
+          # Foxy spells these obstacle_range / raytrace_range. The Galactic names this file used were ignored without a word, leaving the defaults 2.5 / 3.0 m.
+          obstacle_range: 6.0
+          raytrace_range: 7.0
+          # The scan lies in the base_link plane, and base_link in odom reads a centimetre or two below zero (seen as z=-0.005..-0.013 on site 2026-09-14). With the default min_obstacle_height of 0.0 every scan point was dropped: nav_ready_check reported 0 of 10000 cells occupied all day and the robot drove at obstacles as if the floor were clear.
+          min_obstacle_height: -1.0
+          max_obstacle_height: 2.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         inflation_radius: 0.35
@@ -232,8 +236,12 @@ global_costmap:
           marking: True
           clearing: True
           inf_is_valid: false
-          obstacle_max_range: 6.0
-          raytrace_max_range: 7.0
+          # Foxy spells these obstacle_range / raytrace_range. The Galactic names this file used were ignored without a word, leaving the defaults 2.5 / 3.0 m.
+          obstacle_range: 6.0
+          raytrace_range: 7.0
+          # The scan lies in the base_link plane, and base_link in odom reads a centimetre or two below zero (seen as z=-0.005..-0.013 on site 2026-09-14). With the default min_obstacle_height of 0.0 every scan point was dropped: nav_ready_check reported 0 of 10000 cells occupied all day and the robot drove at obstacles as if the floor were clear.
+          min_obstacle_height: -1.0
+          max_obstacle_height: 2.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         inflation_radius: 0.4
