@@ -214,6 +214,19 @@ Measured on 2026-09-03, two to three runs per condition, in
 ## Traps That Cost Whole Sessions
 
 ```text
+An RViz on the MiniPC makes the robot two seconds late. Measured on the board
+on 2026-09-14, one clock, three runs: with no RViz /livox/lidar arrived 0.11 s
+after its stamp, /Odometry 0.03 s, /scan 0.04 s. With RViz open on the MiniPC
+all three were 2.0-2.2 s late - on the board itself, so FAST-LIO and therefore
+Nav2 were working from where the robot was two seconds earlier. Closing RViz
+put them back to 0.11 / 0.03 / 0.07. The IMU, from the same sensor and clock,
+stayed at 0.02-0.05 s throughout, which is how it is known to be delivery and
+not a clock offset. The two seconds match the robot coasting 0.82 m past a
+goal at 0.4 m/s, and turning past every heading. Mechanism: a remote reader of
+a large topic over a lossy Wi-Fi link backs up the sender for local readers
+too. No PointCloud2 display in RViz across Wi-Fi, ever - and when a test
+result looks wrong, first check whether an RViz was open during it.
+
 replay defaults to true on livox_robot.launch.py. A live run without
 replay:=false waits forever for a /clock that never comes.
 
