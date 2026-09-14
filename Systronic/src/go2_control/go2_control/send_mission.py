@@ -55,6 +55,8 @@ from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from std_msgs.msg import String
 
+import tf2_ros
+
 from go2_control.nav_ready_check import NavReadyCheck
 
 
@@ -168,6 +170,13 @@ class MissionRunner:
         self.result = None
         self.last_print = 0.0
         self.capture_reply = None
+        # Filled in per waypoint so the feedback line can show how far the
+        # heading still has to go, not only the distance.
+        self._goal_yaw = None
+        self.base_frame = 'base_link'
+        self._yaw_tol_deg = 17.2      # yaw_goal_tolerance 0.30 rad
+        self._tf_buffer = tf2_ros.Buffer()
+        self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, node)
         self.capture_pub = node.create_publisher(
             String, '/mission/capture_request', 10)
         node.create_subscription(
@@ -226,14 +235,44 @@ class MissionRunner:
             return
         self.last_print = now
         fb = msg.feedback
+
+        # The heading, next to the heading that was asked for. Nav2's own
+        # feedback carries distance_remaining and nothing about yaw, and a
+        # robot sitting at its goal position refusing to finish is almost
+        # always outside yaw_goal_tolerance - which was invisible here until
+        # 2026-09-14, when it cost an afternoon of reading quaternions off
+        # another terminal and converting them by hand.
+        yaw_part = ''
+        current = self._current_yaw()
+        if current is not None and self._goal_yaw is not None:
+            err = math.degrees(math.atan2(
+                math.sin(self._goal_yaw - current),
+                math.cos(self._goal_yaw - current)))
+            inside = 'IN ' if abs(err) <= self._yaw_tol_deg else 'OUT'
+            yaw_part = (', yaw %+7.2f -> %+7.2f, err %+7.2f %s'
+                        % (math.degrees(current),
+                           math.degrees(self._goal_yaw), err, inside))
+
         print(f'    {fb.distance_remaining:6.2f} m to go, '
               f'{fb.navigation_time.sec:3d}s elapsed, '
-              f'{fb.number_of_recoveries} recovery/ies',
+              f'{fb.number_of_recoveries} recovery/ies{yaw_part}',
               flush=True)
+
+    def _current_yaw(self):
+        """Heading in the map frame, or None if TF cannot answer yet."""
+        try:
+            tf = self._tf_buffer.lookup_transform(
+                self.frame, self.base_frame, rclpy.time.Time())
+        except Exception:                          # noqa: BLE001
+            return None
+        q = tf.transform.rotation
+        return math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                          1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
     def send(self, wp):
         goal = NavigateToPose.Goal()
         goal.pose = to_pose(self.frame, wp, self.node.get_clock())
+        self._goal_yaw = float(wp.get('yaw', 0.0))
 
         send_future = self.client.send_goal_async(
             goal, feedback_callback=self.feedback)
