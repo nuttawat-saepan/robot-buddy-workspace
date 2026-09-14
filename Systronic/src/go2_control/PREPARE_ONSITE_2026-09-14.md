@@ -84,8 +84,28 @@ ros2 service call /slam_toolbox/save_map slam_toolbox/srv/SaveMap \
     "{name: {data: '$HOME/go2_ws/src/go2_control/map/site_$(date +%Y%m%d_%H%M)'}}"
 ```
 
-**Gate** — กำแพงทับกันตอนปิดลูป และบรรทัด `image:` ในไฟล์ yaml เป็นชื่อไฟล์เปล่า
-ไม่ใช่พาธ
+**Gate สามข้อ** ข้อ 2 กับ 3 ทำให้สแตกยกไม่ขึ้นทั้งชุด เจอมาแล้ววันที่ 14
+
+1. กำแพงทับกันตอนปิดลูป
+
+2. บรรทัด `image:` ในไฟล์ yaml เป็นชื่อไฟล์เปล่า ไม่ใช่พาธ
+
+   ```bash
+   sed -i 's|^image: .*/|image: |' <ไฟล์แมพ>.yaml
+   ```
+
+3. **อัปเดต `SITE_MAP` ใน onsite.env ให้ชี้แมพใหม่** และบนบอร์ดต้องเป็นพาธของ
+   บอร์ด ไม่ใช่ของ MiniPC
+
+   ```bash
+   sed -i "s|^export SITE_MAP=.*|export SITE_MAP=/home/unitree/go2_ws/src/go2_control/map/<ชื่อ>.yaml|" \
+       ~/go2_ws/scripts/onsite.env
+   source ~/go2_ws/scripts/setup_robot_env.sh && cat $SITE_MAP
+   ```
+
+ถ้าข้อ 2 หรือ 3 ผิด `map_server` จะ configure ไม่ผ่าน แล้ว lifecycle_manager
+ทิ้งทั้ง `map_server` และ `amcl` ไว้ที่ `unconfigured` สิ่งที่เห็นคือ
+`planner_server` ขึ้น `Invalid frame ID "map"` ซ้ำไม่หยุด ซึ่งอ่านเหมือนปัญหา TF
 
 ### ขั้น 2 · เปิดสแตก · 15 นาที
 

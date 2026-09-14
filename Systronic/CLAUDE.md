@@ -219,6 +219,21 @@ replay:=false waits forever for a /clock that never comes.
 
 ros2 bag play has no --clock on Foxy. The bag_clock node supplies it.
 
+A new map is not finished when slam_toolbox saves it. Two more things have to
+happen or the whole stack refuses to come up, both seen on 2026-09-14:
+
+  the yaml's image: line is written as a full path, and map_server wants a
+  bare filename next to the .pgm
+      sed -i 's|^image: .*/|image: |' <map>.yaml
+
+  SITE_MAP in onsite.env still points at the previous map, and on the board
+  it must be a board-local path - an onsite.env copied from the MiniPC
+  carries /home/sys20/... which does not exist there
+
+Either one makes map_server fail to configure, and lifecycle_manager then
+leaves map_server AND amcl unconfigured. What you see is planner_server
+repeating 'Invalid frame ID "map"' forever, which reads as a TF problem.
+
 livox_mid360_lio.launch.py needs ~/ws_fastlio_livox sourced as well. Without
 it FAST-LIO never starts while AMCL, map_server and the bag all run normally,
 announced only by amcl_drift_check saying it has no odometry - which reads as
