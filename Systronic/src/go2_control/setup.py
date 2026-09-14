@@ -111,6 +111,7 @@ setup(
         'reconfigure = go2_control.reconfigure:main',
         'map_from_bag = go2_control.map_from_bag:main',
         'yaw_watch = go2_control.yaw_watch:main',
+        'pipeline_latency = go2_control.pipeline_latency:main',
         'bag_clock = go2_control.bag_clock:main',
         'lio_odom_relay = go2_control.lio_odom_relay:main',
         'sensor_watchdog = go2_control.sensor_watchdog:main',
