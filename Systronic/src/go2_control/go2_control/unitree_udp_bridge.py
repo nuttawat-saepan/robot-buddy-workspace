@@ -73,6 +73,10 @@ def parse_args():
                              'robot\'s topics and use what is actually there - '
                              'do not guess a name.')
     parser.add_argument('--port', type=int, default=32123)
+    parser.add_argument('--no-stop-on-zero', dest='stop_on_zero',
+                        action='store_false',
+                        help='Send a zero command as Move(0,0,0), which the '
+                             'firmware ramps down, instead of StopMove.')
     parser.add_argument('--timeout', type=float, default=0.5,
                         help='Seconds without a packet before the robot is stopped.')
     parser.add_argument('--max-linear', type=float, default=0.05)
@@ -308,7 +312,23 @@ def pump(args, send_move, send_stop, keepalive=None):
                 rx_count = tx_count = 0
                 report_at = now
 
-            if held is not None and now - last_rx <= args.timeout:
+            # A zero command is a stop, and is sent as StopMove rather than
+            # Move(0, 0, 0). Found on site on 2026-09-14: a hand-published
+            # Twist that simply ended stopped the robot at once, because the
+            # silence reached the timeout branch below and that sends
+            # StopMove; but Nav2 ends a goal by publishing zeros, which went
+            # out as Move(0, 0, 0), and the firmware ramps a Move down rather
+            # than halting. The robot coasted 0.6-0.8 m past every straight
+            # goal and turned past every heading. --no-stop-on-zero restores
+            # the old behaviour.
+            is_zero = (held is not None and args.stop_on_zero
+                       and all(abs(v) < 1e-3 for v in held))
+            if held is not None and now - last_rx <= args.timeout and is_zero:
+                if not stopped:
+                    send_stop()
+                    stopped = True
+                    print('zero command: stopped', flush=True)
+            elif held is not None and now - last_rx <= args.timeout:
                 if now - last_tx >= period:
                     if keepalive is not None and sent % 20 == 0:
                         keepalive()
