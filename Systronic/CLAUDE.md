@@ -219,6 +219,13 @@ replay:=false waits forever for a /clock that never comes.
 
 ros2 bag play has no --clock on Foxy. The bag_clock node supplies it.
 
+deploy_to_board.sh used to delete a map made on the board. rsync --delete
+against src/go2_control/ removes anything the MiniPC does not have, and a map
+saved into src/go2_control/map/ is exactly that. It ate one on 2026-09-14,
+after the walk and before it had ever been used. Maps named site_* are now
+protected in both directions, but copy anything you cannot afford to lose off
+the board before deploying.
+
 A new map is not finished when slam_toolbox saves it. Two more things have to
 happen or the whole stack refuses to come up, both seen on 2026-09-14:
 

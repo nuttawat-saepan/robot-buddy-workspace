@@ -47,7 +47,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="$(dirname "$HERE")"
 cd "$WS"
 
+# --delete is what makes a deploy authoritative, and it is also what ate a
+# site map on 2026-09-14. A map made on the board lives in
+# src/go2_control/map/ and does not exist here, so rsync removed it - forty
+# minutes of walking the room, gone in the deploy that followed it, with
+# nothing said. Maps named site_* are protected from both sides: they are
+# never sent and never deleted.
 RSYNC_FLAGS=(-az --delete
+    --filter 'protect map/site_*' --exclude 'map/site_*'
     --exclude 'build/' --exclude 'install/' --exclude 'log/'
     --exclude '__pycache__/' --exclude '*.pyc'
     --exclude '.git/')
