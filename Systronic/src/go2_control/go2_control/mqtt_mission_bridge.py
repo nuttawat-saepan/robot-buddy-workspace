@@ -323,13 +323,26 @@ class MqttMissionBridge(Node):
         self.mqtt.on_connect = self._on_connect
         self.mqtt.on_message = self._on_message
         self.mqtt.reconnect_delay_set(min_delay=1, max_delay=5)
+        self.mqtt.on_disconnect = self._on_disconnect
+        # connect_async and then loop_start, unconditionally. The previous
+        # code called connect() first and loop_start() only if that
+        # succeeded, while the log said it would retry - it did not. paho
+        # only reconnects from inside a running loop, so one refused or
+        # timed-out first attempt left the bridge permanently offline with
+        # the node alive and every other check passing. On site on
+        # 2026-09-14 the board's Wi-Fi was dropping in and out, the first
+        # attempt fell in a gap, and the web had no map, no pose and no way
+        # to send a mission for the rest of the run.
         try:
-            self.mqtt.connect(self.broker, self.port, 60)
-            self.mqtt.loop_start()
+            self.mqtt.connect_async(self.broker, self.port, 60)
         except Exception as exc:                   # noqa: BLE001
-            self.get_logger().error(
-                'MQTT connect failed: %s - the node stays up and retries'
-                % exc)
+            self.get_logger().error('MQTT connect_async failed: %s' % exc)
+        self.mqtt.loop_start()
+
+    def _on_disconnect(self, _client, _userdata, rc):
+        if rc != 0:
+            self.get_logger().warn(
+                'MQTT disconnected rc=%s - reconnecting on its own' % rc)
 
     def _on_connect(self, client, _userdata, _flags, rc):
         self.get_logger().info('MQTT connected rc=%s' % rc)
