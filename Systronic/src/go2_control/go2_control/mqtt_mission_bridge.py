@@ -24,6 +24,7 @@ web has been seen to work against it.
                                            name}]}
     in   /missions/control   {action: "pause" | "resume" | "stop"
                                       | "get_state" | "get_params"
+                                      | "set_initial_pose", x, y, yaw
                                       | "set_params", params: {...},
                                         restart: bool}
     out  <statusTopic>       {runId, missionId, status, message}
@@ -36,7 +37,8 @@ web has been seen to work against it.
                               image}   - image is base64 JPEG
     out  /missions/map       {width, height, resolution, origin:{x,y,yaw},
                               image}   - base64 PNG, occupied pixels dark
-    out  /missions/pose      {x, y, yaw, frame, timestamp}
+    out  /missions/pose      {x, y, yaw, frame, localizationSpread,
+                              timestamp}
     out  /missions/params    {values, limits, readonly,
                               clamped_by_bridge, notes, timestamp}
     out  /missions/state     {hasMission, runId, missionId, paused, stopping,
@@ -254,6 +256,25 @@ class MqttMissionBridge(Node):
 
         self.capture_pub = self.create_publisher(
             String, '/mission/capture_request', 10)
+
+        # Setting the initial pose from the web. /initialpose is what RViz's
+        # 2D Pose Estimate publishes and what AMCL listens to; this is the
+        # same message from the same place, so the robot cannot tell the
+        # difference. It is a pose, not a velocity - nothing here moves the
+        # robot.
+        from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray
+        from rclpy.qos import QoSProfile as _Qos, ReliabilityPolicy as _Rel
+        self.initialpose_pub = self.create_publisher(
+            PoseWithCovarianceStamped, '/initialpose', 10)
+        # The particle cloud's spread is how the web knows whether a pose it
+        # sent has taken: AMCL scatters the particles over the covariance
+        # given and pulls them in as the scan agrees with the map. Best
+        # effort, matching AMCL - a reliable subscription receives nothing.
+        self.spread = None
+        pqos = _Qos(depth=1)
+        pqos.reliability = _Rel.BEST_EFFORT
+        self.create_subscription(
+            PoseArray, '/particlecloud', self._on_particles, pqos)
         self.create_subscription(
             String, '/mission/capture_done', self._on_capture_done, 10)
         self.capture_reply = None
@@ -392,6 +413,8 @@ class MqttMissionBridge(Node):
             self.paused = False
             self._cancel_current()
             self.get_logger().warn('stopped by the web')
+        elif action == 'set_initial_pose':
+            self._set_initial_pose(data)
         elif action == 'get_state':
             self._publish_state()
         elif action == 'get_params':
@@ -1013,6 +1036,68 @@ class MqttMissionBridge(Node):
 
     # -------------------------------------------------------------- pose
 
+    def _on_particles(self, msg):
+        n = len(msg.poses)
+        if n < 2:
+            self.spread = None
+            return
+        xs = [p.position.x for p in msg.poses]
+        ys = [p.position.y for p in msg.poses]
+        mx, my = sum(xs) / n, sum(ys) / n
+        self.spread = math.sqrt(
+            sum((x - mx) ** 2 + (y - my) ** 2 for x, y in zip(xs, ys)) / n)
+
+    def _set_initial_pose(self, data):
+        """Tell AMCL where the robot is, from a click on the web map.
+
+        Refused while a mission runs. Moving the localiser's idea of the
+        robot under a goal that is being driven is how a robot sets off
+        towards a wall at full speed.
+
+        The covariance is deliberately loose - 0.5 m and about 15 degrees -
+        because a click on a 5 cm map is not more accurate than that, and a
+        tight covariance around a slightly wrong click leaves AMCL no room to
+        correct it from the scan. The spread reported afterwards is what
+        says whether it converged.
+        """
+        from geometry_msgs.msg import PoseWithCovarianceStamped
+        note = None
+        if self.mission is not None and not self.stopping:
+            note = 'a mission is running - initial pose refused'
+        else:
+            try:
+                x = float(data['x'])
+                y = float(data['y'])
+                yaw = float(data.get('yaw', 0.0))
+            except (KeyError, TypeError, ValueError):
+                note = 'set_initial_pose needs numeric x, y and yaw (radians)'
+        if note is None:
+            msg = PoseWithCovarianceStamped()
+            msg.header.frame_id = self.frame
+            # Zero stamp: "latest transform". A current-time stamp runs a few
+            # milliseconds ahead of odometry and AMCL refuses it, which was
+            # measured on site on 2026-09-11.
+            msg.pose.pose.position.x = x
+            msg.pose.pose.position.y = y
+            z, w = yaw_to_quaternion(yaw)
+            msg.pose.pose.orientation.z = z
+            msg.pose.pose.orientation.w = w
+            cov = [0.0] * 36
+            cov[0] = 0.25          # x variance, (0.5 m)^2
+            cov[7] = 0.25          # y variance
+            cov[35] = 0.068        # yaw variance, (15 deg)^2
+            msg.pose.covariance = cov
+            self.initialpose_pub.publish(msg)
+            self.spread = None     # the old cloud no longer means anything
+            self.get_logger().info(
+                'initial pose from the web: x=%.3f y=%.3f yaw=%.3f'
+                % (x, y, yaw))
+        self._publish(self.state_topic, {
+            'initialPose': {'accepted': note is None, 'note': note,
+                            'x': data.get('x'), 'y': data.get('y'),
+                            'yaw': data.get('yaw')},
+            'timestamp': int(time.time())})
+
     def _publish_pose(self):
         """Where the robot is, once a second, whether or not a mission runs.
 
@@ -1034,8 +1119,13 @@ class MqttMissionBridge(Node):
         # know how old it is, and a stale pose that looks current is worse
         # than a gap. The board's clock was 56 years out until today, which is
         # exactly the failure this field makes visible.
+        # localizationSpread: metres of particle scatter, or None when AMCL
+        # has not updated since the last pose was set - it only updates after
+        # the robot moves about 0.2 m. Under 0.35 is localised.
         self._publish(self.pose_topic,
                       {'x': t.x, 'y': t.y, 'yaw': yaw, 'frame': self.frame,
+                       'localizationSpread': (None if self.spread is None
+                                              else round(self.spread, 3)),
                        'timestamp': int(time.time())})
 
 
