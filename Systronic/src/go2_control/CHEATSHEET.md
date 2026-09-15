@@ -1,120 +1,163 @@
 # ชุดคำสั่งหน้างาน
 
-`<B>` = IP บอร์ด เช่น `192.168.80.111`
+ตัวอย่างใช้ IP บอร์ด `192.168.80.111` — เปลี่ยนตาม Wi-Fi ไซต์นั้น
 
-## 0 · ก่อนเริ่ม (MiniPC)
+---
 
+## เปิดหุ่นให้ใช้งาน
+
+**1. เช็คว่าบอร์ดตอบ** (MiniPC)
 ```bash
-nc -vz -w 3 <B> 22                                         # บอร์ดตอบไหม (ping ใช้ไม่ได้)
-ssh -t unitree@<B> "sudo date -s \"$(date -u +'%F %T') UTC\""   # ตั้งนาฬิกา ทุกครั้งที่บูต
-./scripts/deploy_to_board.sh unitree@<B>                   # ส่งโค้ด
+nc -vz -w 3 192.168.80.111 22
 ```
 
-## 1 · เปิดใช้งาน (บอร์ด)
-
+**2. ตั้งนาฬิกาบอร์ด** (MiniPC) — ทุกครั้งที่หุ่นเปิดใหม่
 ```bash
-ssh unitree@<B>
-tmux new -s go2            # กลับเข้า: tmux attach -t go2
+ssh -t unitree@192.168.80.111 "sudo date -s \"$(date -u +'%F %T') UTC\""
 ```
 
-**T1 สแตก** — หุ่นนิ่ง 20 วิ
+**3. ส่งโค้ดขึ้นบอร์ด** (MiniPC) — เฉพาะตอนโค้ดเปลี่ยน
+```bash
+cd ~/projects/systonic-2307/Systronic
+./scripts/deploy_to_board.sh unitree@192.168.80.111
+```
 
+**4. เข้าบอร์ด**
+```bash
+ssh unitree@192.168.80.111
+tmux new -s go2
+```
+
+**5. เปิดสแตก** — หุ่นยืนนิ่ง 20 วินาที
 ```bash
 source ~/go2_ws/scripts/setup_robot_env.sh
 ros2 launch go2_control onsite_stack.launch.py map:=$SITE_MAP replay:=false
 ```
+รอจนเห็น `Managed nodes are active`
 
-**T2 bridge หุ่น** — `Ctrl-b c` · รีโมทในมือ
-
+**6. เปิดตัวสั่งหุ่น** — กด `Ctrl-b c` ก่อน · รีโมทต้องอยู่ในมือ
 ```bash
 source ~/go2_ws/scripts/setup_sdk_env.sh
 ros2 run go2_control unitree_udp_bridge --mode raw --interface eth0 --max-linear 0.45 --max-angular 0.6 --timeout 0.30 --robot-ack I_UNDERSTAND_THIS_CAN_MOVE_THE_REAL_ROBOT
 ```
+รอจนเห็น `armed: raw mode`
 
-**T3 ใช้งาน** — `Ctrl-b c`
-
+**7. เปิดหน้าต่างใช้งาน** — กด `Ctrl-b c`
 ```bash
 source ~/go2_ws/scripts/setup_robot_env.sh
+```
+
+**8. ตั้งตำแหน่งหุ่น** — บนเว็บ กดตั้งตำแหน่ง แล้วรอเขียว
+
+**9. เช็คพร้อมเดิน** (หน้าต่างข้อ 7)
+```bash
 ros2 run go2_control nav_ready_check
 ```
+ต้องขึ้น `READY`
 
-mqtt bridge มากับ T1 แล้ว **ห้ามรันแยก**
+**10. สั่งมิชชันจากเว็บ**
 
-## 2 · ตั้งตำแหน่ง
+---
 
-เว็บ: ตั้งตำแหน่งหุ่น → รอ `localizationSpread < 0.35`
+## ปิดหุ่นตอนเลิก
 
-หรือ RViz (MiniPC) แค่ `Map` + `LaserScan` → 2D Pose Estimate → **ปิด RViz ทันที**
-
+**1. ปิดทุกอย่างบนบอร์ด**
 ```bash
-source scripts/setup_ground_env.sh && rviz2
+tmux kill-server
 ```
 
-## 3 · สั่งเดิน
-
-เว็บ หรือ
-
+**2. แบ็กอัพ** (MiniPC)
 ```bash
-ros2 run go2_control send_mission --goal <x> <y> <yaw>
-ros2 run go2_control send_mission --file ~/mission.json
-ros2 param set /mqtt_mission_bridge capture_views 4       # จุดถ่ายรูปหมุนถ่าย 4 มุม
+cd ~/projects/systonic-2307/Systronic
+./scripts/backup_from_board.sh unitree@192.168.80.111
 ```
 
-## 4 · ปรับค่า (T3)
+---
 
+## ใช้บ่อยระหว่างเทส (หน้าต่างข้อ 7)
+
+**ลดความเร็ว**
 ```bash
-ros2 param set /controller_server FollowPath.max_vel_x 0.20       # สด
-ros2 param set /controller_server FollowPath.max_vel_theta 0.30   # สด
-ros2 run go2_control reconfigure --node /amcl --set update_min_d=0.05   # ค่าที่ต้องรีสตาร์ท
+ros2 param set /controller_server FollowPath.max_vel_x 0.20
+ros2 param set /controller_server FollowPath.max_vel_theta 0.30
 ```
 
-## 5 · ดู / เช็ค (T3)
-
+**จุดถ่ายรูปให้หมุนถ่าย 4 มุม**
 ```bash
-ros2 run tf2_ros tf2_echo map base_link         # ตำแหน่ง
-ros2 run go2_control yaw_watch                  # มุมเป็นองศา
-ros2 run go2_control pipeline_latency           # ช้าตรงไหน
-ros2 topic hz /livox/lidar                      # ~10 Hz
-ros2 lifecycle get /map_server                  # ต้อง active
-ros2 node list | grep -c "^/mqtt_mission_bridge$"   # ต้อง 1
-~/go2_ws/scripts/measure_board_load.sh 60       # CPU ตอนหุ่นเดิน
+ros2 param set /mqtt_mission_bridge capture_views 4
 ```
 
-แมพไม่ขึ้น / `Invalid frame ID "map"`:
-
+**ดูตำแหน่งหุ่น**
 ```bash
-for n in /map_server /amcl; do ros2 lifecycle set $n configure; ros2 lifecycle set $n activate; done
+ros2 run go2_control yaw_watch
+```
+
+**สั่งเดินโดยไม่ใช้เว็บ** — ไปจุด x=0.47 y=0.82 หันทาง -1.60 เรเดียน
+```bash
+ros2 run go2_control send_mission --goal 0.47 0.82 -1.60
+```
+
+**หุ่นช้า/เลยเป้า เช็คว่าช้าตรงไหน**
+```bash
+ros2 run go2_control pipeline_latency
+```
+
+---
+
+## แก้ปัญหา
+
+**แมพไม่ขึ้นเว็บ / `Invalid frame ID "map"` ขึ้นไม่หยุด**
+```bash
+ros2 lifecycle set /map_server configure
+ros2 lifecycle set /map_server activate
+ros2 lifecycle set /amcl configure
+ros2 lifecycle set /amcl activate
 ros2 service call /lifecycle_manager_navigation/manage_nodes nav2_msgs/srv/ManageLifecycleNodes "{command: 0}"
 ```
 
-## 6 · ทำแมพใหม่
-
+**เว็บไม่ได้อะไรเลย** — ต้องได้ 1
 ```bash
-ros2 launch go2_control mapping_stack.launch.py          # เข็นทั่วห้อง ปิดลูป
+ros2 node list | grep -c "^/mqtt_mission_bridge$"
+```
+
+**ssh หลุดแล้วกลับเข้า**
+```bash
+ssh unitree@192.168.80.111
+tmux attach -t go2
+```
+
+---
+
+## ทำแมพใหม่ (ห้องใหม่)
+
+**1. เปิดโหมดทำแมพ** แล้วเข็นหุ่นทั่วห้อง กลับมาจุดเดิม
+```bash
+source ~/go2_ws/scripts/setup_robot_env.sh
+ros2 launch go2_control mapping_stack.launch.py
+```
+
+**2. บันทึก** (อีกหน้าต่าง)
+```bash
 mkdir -p ~/maps
-ros2 service call /slam_toolbox/save_map slam_toolbox/srv/SaveMap "{name: {data: '$HOME/maps/site_$(date +%Y%m%d_%H%M)'}}"
-sed -i 's|^image: .*/|image: |' ~/maps/site_*.yaml
-sed -i "s|^export SITE_MAP=.*|export SITE_MAP=/home/unitree/maps/<ชื่อ>.yaml|" ~/go2_ws/scripts/onsite.env
+ros2 service call /slam_toolbox/save_map slam_toolbox/srv/SaveMap "{name: {data: '/home/unitree/maps/site_room2'}}"
 ```
 
-## 7 · ปิด / เก็บ
-
+**3. แก้ไฟล์แมพ**
 ```bash
-# บอร์ด
-tmux kill-server
-ps aux | grep -E "fastlio|amcl|controller_server|unitree_udp_bridge" | grep -v grep   # ต้องว่าง
+sed -i 's|^image: .*/|image: |' ~/maps/site_room2.yaml
 ```
 
+**4. บอกสแตกให้ใช้แมพใหม่**
 ```bash
-# MiniPC
-./scripts/backup_from_board.sh unitree@<B>
+sed -i "s|^export SITE_MAP=.*|export SITE_MAP=/home/unitree/maps/site_room2.yaml|" ~/go2_ws/scripts/onsite.env
 ```
 
-## กฎ
+**5. ปิดโหมดทำแมพ (`Ctrl-c`) แล้วกลับไปข้อ 5 ของ "เปิดหุ่นให้ใช้งาน"**
 
-```text
-RViz ข้าม Wi-Fi ห้ามมี PointCloud2 — ทำหุ่นช้า 2 วิ
-T2 ใช้ setup_sdk_env (โดเมน 0) ที่เหลือ setup_robot_env (43)
-ห้ามฆ่า gst_realsense / mediamtx (กล้อง)
-แบ็กอัพก่อน deploy และก่อนล้างบอร์ด
-```
+---
+
+## ห้าม
+
+- เปิด RViz ค้างไว้ตอนหุ่นเดิน — ทำหุ่นช้า 2 วินาที
+- รัน `mqtt_mission_bridge` เอง — สแตกเปิดให้แล้ว รันซ้ำจะสั่งแย่งกัน
+- ข้อ 6 ใช้ `setup_sdk_env.sh` ที่เหลือใช้ `setup_robot_env.sh` — สลับกันแล้วใช้ไม่ได้
