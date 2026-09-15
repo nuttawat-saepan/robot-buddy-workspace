@@ -91,6 +91,7 @@ if [ "$(date +%Y)" -lt 2020 ]; then
     echo
 fi
 
+[ -f "$HERE/check_site_ips.sh" ] && . "$HERE/check_site_ips.sh" && _check_site_ips "${ROBOT_NET_IF:-wlan0}" ROBOT_IP GROUND_IP MQTT_BROKER
 echo "robot environment ready"
 echo "  RMW              $RMW_IMPLEMENTATION"
 echo "  ROS_DOMAIN_ID    ${ROS_DOMAIN_ID:-0}"

@@ -4,6 +4,34 @@
 
 ---
 
+## ไซต์ใหม่ / Wi-Fi ใหม่ — แก้ env ก่อนทุกอย่าง
+
+ทุกไซต์ได้ IP คนละวง ถ้าไม่แก้ เว็บจะว่างเปล่าโดยไม่มีอะไรฟ้อง
+ตอน `source setup_*_env.sh` ถ้า IP ไม่ตรงวง จะขึ้น `!!! onsite.env does not match`
+
+**1. ดู IP ของเครื่องตัวเอง**
+```bash
+ip -4 addr | grep 192.168
+```
+
+**2. MiniPC** `scripts/onsite.env`
+```text
+GROUND_IP=<IP MiniPC>
+ROBOT_IP=<IP บอร์ด>
+MQTT_BROKER=<IP broker>
+```
+
+**3. บอร์ด** `~/go2_ws/scripts/onsite.env` — สามค่าเดียวกัน
+```bash
+nano ~/go2_ws/scripts/onsite.env
+```
+
+**4. เว็บ** `MQTT_URL=mqtt://<IP broker>:1883` และถ้าเบราว์เซอร์ต่อเอง `ws://<IP broker>:9001`
+
+**5. source ใหม่** แล้วดูว่าไม่มี `!!!`
+
+---
+
 ## เปิดหุ่นให้ใช้งาน
 
 **1. เช็คว่าบอร์ดตอบ** (MiniPC)

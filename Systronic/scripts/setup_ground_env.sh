@@ -47,6 +47,7 @@ export CYCLONEDDS_URI="<CycloneDDS><Domain id=\"any\"><General>
 # launch files, and it is what makes collect_logs.sh worth running.
 export OVERRIDE_LAUNCH_PROCESS_OUTPUT=both
 
+[ -f "$HERE/check_site_ips.sh" ] && . "$HERE/check_site_ips.sh" && _check_site_ips "${GROUND_NET_IF:-wlp4s0}" ROBOT_IP GROUND_IP MQTT_BROKER
 echo "ground station environment ready"
 echo "  RMW              $RMW_IMPLEMENTATION"
 echo "  ROS_DOMAIN_ID    ${ROS_DOMAIN_ID:-0}"
