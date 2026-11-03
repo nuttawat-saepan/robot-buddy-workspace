@@ -77,6 +77,8 @@ from std_msgs.msg import String
 
 import tf2_ros
 
+from go2_control.nav_ready_check import SPREAD_LIMIT_M
+
 
 # ------------------------------------------------------------- parameters
 
@@ -275,6 +277,15 @@ class MqttMissionBridge(Node):
         pqos.reliability = _Rel.BEST_EFFORT
         self.create_subscription(
             PoseArray, '/particlecloud', self._on_particles, pqos)
+        # The same limit and switch as nav_ready_check, which only guards
+        # send_mission. A mission from the web came straight here unchecked.
+        self.enforce_spread_limit = os.environ.get(
+            'GO2_ENFORCE_SPREAD_LIMIT', 'true').lower() not in (
+                'false', '0', 'no')
+        self.localization_check = None
+        self.create_subscription(
+            String, '/localization_watch/status',
+            self._on_localization_check, 10)
         self.create_subscription(
             String, '/mission/capture_done', self._on_capture_done, 10)
         self.capture_reply = None
@@ -730,6 +741,23 @@ class MqttMissionBridge(Node):
                 'imageTopic': data.get('imageTopic'),
                 'waypoints': waypoints,
             }
+        # Spread is None until the robot has moved about 0.2 m after a pose is
+        # set, because AMCL publishes no cloud before that. Refusing then would
+        # refuse every first mission, so only a measured wide cloud stops it.
+        if (self.enforce_spread_limit and self.spread is not None
+                and self.spread > SPREAD_LIMIT_M):
+            note = ('localization spread %.2f m is above %.2f m - set the pose '
+                    'again or move the robot until it settles'
+                    % (self.spread, SPREAD_LIMIT_M))
+            self.get_logger().warn('mission refused: ' + note)
+            self._status('FAILED', note)
+            with self.lock:
+                self.mission = None
+            return
+        if self.spread is None:
+            self.get_logger().warn(
+                'starting with no spread measured yet - AMCL has not updated '
+                'since the pose was set')
         self.paused = False
         self.stopping = False
 
@@ -1047,6 +1075,12 @@ class MqttMissionBridge(Node):
         self.spread = math.sqrt(
             sum((x - mx) ** 2 + (y - my) ** 2 for x, y in zip(xs, ys)) / n)
 
+    def _on_localization_check(self, msg):
+        try:
+            self.localization_check = json.loads(msg.data)
+        except ValueError:
+            self.localization_check = None
+
     def _set_initial_pose(self, data):
         """Tell AMCL where the robot is, from a click on the web map.
 
@@ -1126,6 +1160,7 @@ class MqttMissionBridge(Node):
                       {'x': t.x, 'y': t.y, 'yaw': yaw, 'frame': self.frame,
                        'localizationSpread': (None if self.spread is None
                                               else round(self.spread, 3)),
+                       'localizationCheck': self.localization_check,
                        'timestamp': int(time.time())})
 
 
