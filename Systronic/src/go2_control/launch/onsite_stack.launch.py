@@ -121,6 +121,13 @@ def generate_launch_description():
         condition=IfCondition(arg('enable_web')),
     )
 
+    watch = Node(
+        package='go2_control',
+        executable='localization_watch',
+        name='localization_watch',
+        output='screen',
+    )
+
     capture = Node(
         package='go2_control',
         executable='mission_capture',
@@ -171,5 +178,5 @@ def generate_launch_description():
         TimerAction(period=15.0, actions=[ground]),
 
         # And the rest once there is a map and a pose to work with.
-        TimerAction(period=25.0, actions=[map_points, relay, web, capture]),
+        TimerAction(period=25.0, actions=[map_points, relay, web, capture, watch]),
     ])

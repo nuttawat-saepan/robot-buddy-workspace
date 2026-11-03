@@ -90,6 +90,7 @@ setup(
         'cmd_vel_node = go2_control.cmd_vel_node:main',
         'cmd_vel_udp_relay = go2_control.cmd_vel_udp_relay:main',
         'nav_ready_check = go2_control.nav_ready_check:main',
+        'localization_watch = go2_control.localization_watch:main',
         'send_mission = go2_control.send_mission:main',
         'mission_capture = go2_control.mission_capture:main',
         'occupancy_grid_points = go2_control.occupancy_grid_points:main',
