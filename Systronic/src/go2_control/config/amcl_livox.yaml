@@ -26,11 +26,11 @@ amcl:
     # the place to be tight about it.
     transform_tolerance: 1.0
 
-    # Only one motion model exists on Foxy, and it is the wrong one for a
-    # handheld walk: 02_loop was carried, so it sidesteps and rotates in ways a
-    # differential base cannot. The alphas below are raised above the 0.2
-    # defaults to stop the filter being over-confident about that motion. On
-    # the robot, where the motion really is differential, drop them back.
+    # Only one motion model exists on Foxy, and it is the differential one,
+    # which is what the Go2W is. 02_loop was recorded from the robot itself
+    # (sensor mounted on the walking Go2, never carried by hand), so a replay of
+    # it is real robot motion. The alphas below are set below the 0.2 defaults
+    # because FAST-LIO's rotation is IMU-aided; see the note above them.
     robot_model_type: "differential"
     # Lowered on site 2026-09-07: driving straight tracked well and every turn
     # threw the cloud wide. Both of these govern how much rotational error AMCL
