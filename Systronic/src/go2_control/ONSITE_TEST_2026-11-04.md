@@ -1,6 +1,6 @@
 # แผนทดสอบหน้างาน 4 พ.ย. 2026
 
-เป้าหมาย: หาว่าการไหลเข้าโต๊ะเกิดจากอะไร และ `alpha3` ที่ต่ำลงช่วยจริงไหม
+เป้าหมาย: หาว่าการไหลเข้าโต๊ะเกิดจากอะไร, `alpha3` ที่ต่ำลงช่วยจริงไหม และตัวกรอง 1 m ใช้งานได้ไหม
 ถือรีโมททุกครั้งที่หุ่นเดิน เริ่มที่ความเร็วไม่เกิน 0.2 m/s
 
 ## ก่อนออกจากออฟฟิศ
@@ -30,9 +30,10 @@
 ## 2. ทำจุดอ้างอิงในแต่ละห้อง
 ทำเครื่องหมาย 3–5 จุด รวมจุดในทางแคบแถว (2.5, 2.5) วัดพิกัดจริงจากผนัง และถ่ายรูปห้องเทียบกับแมพ
 
-## 3. เก็บค่าฐาน `alpha3 = 0.4`
+## 3. เก็บค่าฐาน `alpha3 = 0.4` (ตัวกรองปิด)
+ค่าหลักตอนนี้คือ `alpha3 = 0.2` การเก็บค่าฐานจึงต้องระบุ profile
 ```bash
-ros2 launch go2_control onsite_stack.launch.py map:=$SITE_MAP replay:=false
+ros2 launch go2_control onsite_stack.launch.py map:=$SITE_MAP replay:=false amcl_params_file:=amcl_livox_alpha3_04.yaml
 ```
 ```bash
 ros2 bag record -o ~/bags/room_alpha04 /livox/lidar /livox/imu /scan /map /amcl_pose /particlecloud /tf /tf_static /Odometry
@@ -41,21 +42,36 @@ ros2 bag record -o ~/bags/room_alpha04 /livox/lidar /livox/imu /scan /map /amcl_
 2. เดินผ่านทางแคบไปกลับ 3 รอบ หยุดจดตำแหน่งทุกจุดอ้างอิง
 3. เดินทางเดินธรรมดา 1 ชุดเป็นตัวควบคุม
 
-## 4. ทดสอบ `alpha3 = 0.2` แล้ว `0.1`
-เปลี่ยนทีละค่า ทำทางเดิมและอัด bag ใหม่ทุกครั้ง
+## 4. ทดสอบ `alpha3` ค่าอื่น (ตัวกรองปิด)
+เปลี่ยนทีละค่า ทำทางเดิมและอัด bag ใหม่ทุกครั้ง: ค่าหลัก 0.2 (ไม่ต้องระบุ) แล้ว 0.1 และ 0.3 ถ้ามีเวลา
 ```bash
-ros2 launch go2_control onsite_stack.launch.py map:=$SITE_MAP replay:=false amcl_params_file:=amcl_livox_alpha3_02.yaml
+ros2 launch go2_control onsite_stack.launch.py map:=$SITE_MAP replay:=false
 ```
 ```bash
 ros2 launch go2_control onsite_stack.launch.py map:=$SITE_MAP replay:=false amcl_params_file:=amcl_livox_alpha3_01.yaml
 ```
+```bash
+ros2 launch go2_control onsite_stack.launch.py map:=$SITE_MAP replay:=false amcl_params_file:=amcl_livox_alpha3_03.yaml
+```
 
-## 5. สิ่งที่ต้องทดสอบเพิ่ม
+## 5. ทดสอบตัวกรอง 1 m (เปิดเมื่อเก็บค่าข้อ 3–4 แล้ว)
+ตัวกรองส่ง `map->odom` แทน AMCL จึงมีผลกับการนำทางโดยตรง ทดสอบความเร็วต่ำและพร้อมหยุดด้วยรีโมท
+```bash
+ros2 launch go2_control onsite_stack.launch.py map:=$SITE_MAP replay:=false enable_localization_guard:=true
+```
+- [ ] เดินปกติแล้วไม่หยุดเอง และตำแหน่งตรงเหมือนตอนปิดตัวกรอง
+- [ ] AMCL ต่างเกิน 1 m: ไม่ใช้ค่านั้น และขึ้นเตือน
+- [ ] ต่างต่อเนื่อง 3 วินาที: มิชชัน pause และกด Resume แล้วยัง pause อยู่
+- [ ] ตั้ง pose ใหม่แล้วกลับมาเดินต่อได้
+- [ ] ถ้าผิดปกติ ให้หยุดด้วยรีโมท แล้วกลับไป launch แบบไม่มีตัวกรอง
+
+## 5.1 ทดสอบอื่น ๆ
 - [ ] ตั้ง pose ซ้ำ 3 รอบ โดยไม่ restart สแตก แล้วเดินสั้น ๆ
 - [ ] เริ่มมิชชันเมื่อ spread เกิน 0.35 m ต้องถูกปฏิเสธและมีเหตุผลบนเว็บ
 - [ ] แถบเตือนบนแผนที่ขึ้นเมื่อ AMCL ต่างจาก FAST-LIO เกิน 1 m
-- [ ] ปรับ slider ระหว่างเดิน แล้วความเร็วจริงเปลี่ยน
+- [ ] ปรับ slider ระหว่างเดิน: `max_vel_x` และ `max_vel_theta` เปลี่ยน และหุ่นเดินเลี้ยวช้าลงตาม เริ่มจากช่วงต่ำก่อน เพราะที่ 100% ความเร็วเลี้ยวคือ 0.60 rad/s สูงกว่าค่าไฟล์ 0.35
 - [ ] กล้องสดขึ้นเว็บ
+- [ ] ดู `clusters` ใน CSV ว่า particle แยกกลุ่มบ่อยแค่ไหน
 
 ## 6. เกณฑ์ผ่าน
 | หัวข้อ | เกณฑ์ |
