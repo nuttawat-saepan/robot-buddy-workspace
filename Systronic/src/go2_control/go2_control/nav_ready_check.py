@@ -12,6 +12,11 @@ that says PASS or FAIL and why.
 
     ros2 run go2_control nav_ready_check
 
+The spread limit remains enforced by default. For an operator-approved site
+test, set GO2_ENFORCE_SPREAD_LIMIT=false before launching, or pass the ROS
+parameter enforce_spread_limit:=false. A wide cloud then remains visible as
+a warning; missing TF, sensor and controller checks still fail normally.
+
 ## What each check means
 
 particle spread  Standard deviation of /particlecloud positions. AMCL starts
@@ -42,6 +47,7 @@ controller       Publisher count on the controller's velocity topic. Nav2's
 """
 
 import math
+import os
 import sys
 
 import rclpy
@@ -76,6 +82,10 @@ class NavReadyCheck(Node):
         costmap_topic = declared('costmap_topic', '/local_costmap/costmap')
         self.scan_topic = declared('scan_topic', '/scan')
         self.period = declared('report_period', 3.0)
+        self.enforce_spread_limit = declared(
+            'enforce_spread_limit',
+            os.environ.get('GO2_ENFORCE_SPREAD_LIMIT', 'true').lower()
+            not in ('false', '0', 'no'))
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -165,10 +175,14 @@ class NavReadyCheck(Node):
             lines.append(('particle spread', 'PASS',
                           f'{self.spread:.3f} m over {self.particles} particles'))
         else:
-            ok = False
-            lines.append(('particle spread', 'FAIL',
+            if self.enforce_spread_limit:
+                ok = False
+            lines.append(('particle spread',
+                          'FAIL' if self.enforce_spread_limit else 'WARN',
                           f'{self.spread:.3f} m, above {SPREAD_LIMIT_M} m - '
-                          f'AMCL has not settled'))
+                          f'AMCL has not settled' +
+                          ('' if self.enforce_spread_limit else
+                           '; operator selected advisory spread check')))
 
         for label, parent, child in (
                 ('tf map->odom', self.map_frame, self.odom_frame),
