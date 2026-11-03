@@ -1,0 +1,23 @@
+# A second cut of the FAST-LIO cloud, for low obstacles in the costmaps only.
+#
+# Separate from /scan on purpose: AMCL compares /scan with a map built from 0.25
+# to 1.05 m, so lowering that band would compare two different slices of the room.
+#
+# FIELD: min_height is a first guess. Too low and the floor becomes an obstacle.
+# Raise range_min if the robot's own wheels or legs appear in /scan_low. The floor
+# close around the robot is never seen from where it stands, so a low object very
+# near it can still be missed.
+pc2scan_livox_low:
+  ros__parameters:
+    target_frame: base_link
+    transform_tolerance: 0.05
+    min_height: 0.08
+    max_height: 0.25
+    angle_min: -3.14159
+    angle_max: 3.14159
+    angle_increment: 0.0087
+    scan_time: 0.1
+    range_min: 0.5
+    range_max: 6.0
+    use_inf: true
+    inf_epsilon: 1.0

@@ -37,6 +37,9 @@ the default configuration plans without commanding anything. Both ends have to
 be changed to arm the system.
 """
 import os
+import tempfile
+
+import yaml
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -81,6 +84,20 @@ def _launch_setup(context, *args, **kwargs):
     if not os.path.isabs(amcl_param):
         amcl_param = os.path.join(go2_share, 'config', amcl_param)
 
+    # With the guard on, localization_watch publishes map->odom. Two publishers
+    # of one transform would make it jump between them. This has to go in the
+    # file: a parameter dict is written under /**, and the file's named amcl
+    # section beats that, so an override here would be silently ignored.
+    if arg('enable_localization_guard').lower() in ('true', '1'):
+        with open(amcl_param) as source:
+            amcl_config = yaml.safe_load(source)
+        amcl_config['amcl']['ros__parameters']['tf_broadcast'] = False
+        guarded = tempfile.NamedTemporaryFile(
+            'w', prefix='amcl_guarded_', suffix='.yaml', delete=False)
+        yaml.safe_dump(amcl_config, guarded)
+        guarded.close()
+        amcl_param = guarded.name
+
     # Foxy's bt_navigator opens default_bt_xml_filename as given rather than
     # resolving it against the nav2_bt_navigator share directory, so a bare
     # filename aborts the whole lifecycle bringup during configure.
@@ -117,12 +134,7 @@ def _launch_setup(context, *args, **kwargs):
         Node(
             package='nav2_amcl', executable='amcl', name='amcl',
             output='screen',
-            # With the guard on, localization_watch publishes map->odom. Two
-            # publishers of one transform would make it jump between them.
-            parameters=[amcl_param, amcl_overrides, {
-                'tf_broadcast':
-                    arg('enable_localization_guard').lower()
-                    not in ('true', '1')}],
+            parameters=[amcl_param, amcl_overrides],
             remappings=[('scan', arg('scan_topic'))],
         ),
         Node(

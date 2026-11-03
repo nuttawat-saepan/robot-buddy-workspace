@@ -133,6 +133,16 @@ def _launch_setup(context, *args, **kwargs):
         Node(
             package='pointcloud_to_laserscan',
             executable='pointcloud_to_laserscan_node',
+            name='pc2scan_livox_low', output='screen',
+            condition=IfCondition(LaunchConfiguration('enable_scan_low')),
+            remappings=[('cloud_in', arg('cloud_topic')),
+                        ('scan', '/scan_low')],
+            parameters=[os.path.join(go2_share, 'pc2scan_livox_low.yaml'),
+                        common, {'target_frame': base_frame}],
+        ),
+        Node(
+            package='pointcloud_to_laserscan',
+            executable='pointcloud_to_laserscan_node',
             name='pc2scan_livox_lio', output='screen',
             remappings=[('cloud_in', arg('cloud_topic')),
                         ('scan', arg('scan_topic'))],
@@ -233,6 +243,10 @@ def generate_launch_description():
         DeclareLaunchArgument('cloud_topic',
                               default_value='/cloud_registered_body'),
         DeclareLaunchArgument('scan_topic', default_value='/scan'),
+        DeclareLaunchArgument(
+            'enable_scan_low', default_value='false',
+            description='Publish /scan_low for low obstacles in the costmaps. '
+                        'Pair with nav2_livox_go2_obstacle_low.yaml.'),
         DeclareLaunchArgument('odom_topic', default_value='/odom'),
         DeclareLaunchArgument('odom_frame', default_value='odom'),
         DeclareLaunchArgument('base_frame', default_value='base_link'),

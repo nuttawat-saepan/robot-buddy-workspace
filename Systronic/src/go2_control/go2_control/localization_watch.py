@@ -210,6 +210,10 @@ class LocalizationWatch(Node):
         self.create_subscription(
             PoseWithCovarianceStamped, '/initialpose', self.on_initial_pose, 10)
         if self.guard:
+            # The seed AMCL itself starts from. Nav2 will not finish coming up
+            # without a map frame, and AMCL may publish no pose until the robot
+            # moves or a pose is set.
+            self.gate.accepted = (0.0, 0.0, 0.0)
             self.tf_broadcaster = TransformBroadcaster(self)
             self.create_subscription(
                 PoseWithCovarianceStamped, '/amcl_pose', self.on_amcl_pose, 10)

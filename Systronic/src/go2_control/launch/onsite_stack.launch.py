@@ -68,6 +68,7 @@ def generate_launch_description():
         launch_arguments={
             'replay': arg('replay'),
             'enable_cmd_vel': 'false',
+            'enable_scan_low': arg('enable_scan_low'),
             'lio_pitch_deg': arg('lio_pitch_deg'),
             'lio_roll_deg': arg('lio_roll_deg'),
             'sensor_height': arg('sensor_height'),
@@ -128,9 +129,8 @@ def generate_launch_description():
         name='localization_watch',
         output='screen',
         parameters=[{
-            'guard': arg('enable_localization_guard').lower()
-                     in ('true', '1'),
-            'use_sim_time': arg('replay').lower() in ('true', '1'),
+            'guard': arg('enable_localization_guard'),
+            'use_sim_time': arg('replay'),
         }],
     )
 
@@ -161,6 +161,10 @@ def generate_launch_description():
             'enable_localization_guard', default_value='false',
             description='true refuses AMCL corrections more than 1 m from '
                         'FAST-LIO and pauses the mission if it stays out.'),
+        DeclareLaunchArgument(
+            'enable_scan_low', default_value='false',
+            description='Publish /scan_low. Pair with '
+                        'nav2_livox_go2_obstacle_low.yaml.'),
         DeclareLaunchArgument('enable_web', default_value='true'),
         DeclareLaunchArgument('enable_capture', default_value='true'),
         DeclareLaunchArgument(
