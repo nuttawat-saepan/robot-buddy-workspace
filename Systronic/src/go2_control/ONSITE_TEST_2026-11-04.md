@@ -10,6 +10,10 @@
 ## 1. เตรียมที่หน้างาน
 1. ต่อทุกเครื่องเข้า Wi-Fi หน้างานเดิม แล้วจด IP ของ Mini PC, broker และบอร์ด
 2. แก้ `scripts/onsite.env` บน Mini PC และ `CAMERA_SIGNAL` ใน `~/robot-app/config/backend.env` ให้ตรง IP
+   - ใช้ Dashboard บน Mini PC: เปิด `http://<IP Mini PC>:5173` และ MQTT broker อยู่ที่ Mini PC
+   - `MQTT_BROKER` บนบอร์ดต้องเป็น IP ของ Mini PC
+   - แก้ `CAMERA_SIGNAL` แล้ว restart ด้วย `systemctl --user restart robot-manager`
+   - Dashboard และ Backend ตั้งเป็น topic จริง `/missions/...` แล้ว Replay จาก Manager ยังใช้ `/prepare/...` จึงไม่ขึ้นบน Dashboard นี้
 3. ส่งโค้ดขึ้นบอร์ด (`--dry-run` ก่อน):
    ```bash
    ./scripts/deploy_to_board.sh unitree@<ROBOT_IP> --dry-run
