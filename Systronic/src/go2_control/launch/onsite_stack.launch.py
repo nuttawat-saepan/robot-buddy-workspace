@@ -81,6 +81,7 @@ def generate_launch_description():
             'replay': arg('replay'),
             'map': arg('map'),
             'enable_rviz': 'false',
+            'enable_localization_guard': arg('enable_localization_guard'),
             # Passed explicitly, and it must be. livox_robot.launch.py is
             # included first and declares a cmd_vel_topic of its own, meaning
             # the watchdog's *output*, /cmd_vel_safe. That value lands in the
@@ -126,6 +127,11 @@ def generate_launch_description():
         executable='localization_watch',
         name='localization_watch',
         output='screen',
+        parameters=[{
+            'guard': arg('enable_localization_guard').lower()
+                     in ('true', '1'),
+            'use_sim_time': arg('replay').lower() in ('true', '1'),
+        }],
     )
 
     capture = Node(
@@ -151,6 +157,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'mqtt_broker',
             default_value=os.environ.get('MQTT_BROKER', '192.168.80.233')),
+        DeclareLaunchArgument(
+            'enable_localization_guard', default_value='false',
+            description='true refuses AMCL corrections more than 1 m from '
+                        'FAST-LIO and pauses the mission if it stays out.'),
         DeclareLaunchArgument('enable_web', default_value='true'),
         DeclareLaunchArgument('enable_capture', default_value='true'),
         DeclareLaunchArgument(

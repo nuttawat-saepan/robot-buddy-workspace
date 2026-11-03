@@ -117,7 +117,12 @@ def _launch_setup(context, *args, **kwargs):
         Node(
             package='nav2_amcl', executable='amcl', name='amcl',
             output='screen',
-            parameters=[amcl_param, amcl_overrides],
+            # With the guard on, localization_watch publishes map->odom. Two
+            # publishers of one transform would make it jump between them.
+            parameters=[amcl_param, amcl_overrides, {
+                'tf_broadcast':
+                    arg('enable_localization_guard').lower()
+                    not in ('true', '1')}],
             remappings=[('scan', arg('scan_topic'))],
         ),
         Node(
@@ -205,6 +210,10 @@ def generate_launch_description():
             description='AMCL parameter file. A bare name is looked up in the '
                         'package config/ directory. Pass amcl_livox_lowcpu.yaml '
                         'when measure_board_load.sh reports OVER.'),
+        DeclareLaunchArgument(
+            'enable_localization_guard', default_value='false',
+            description='true hands map->odom to localization_watch, which '
+                        'refuses AMCL corrections beyond its limit.'),
         DeclareLaunchArgument('scan_topic', default_value='/scan'),
         DeclareLaunchArgument('odom_topic', default_value='/odom'),
         DeclareLaunchArgument('map_frame', default_value='map'),
