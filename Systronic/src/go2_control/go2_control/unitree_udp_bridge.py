@@ -638,7 +638,12 @@ def run(args):
     if args.mode == 'probe':
         run_probe(args)
         return
-    if args.robot_ack != REQUIRED_ROBOT_ACK:
+    # The operator turns this on once, in onsite.env, so the bridge can start
+    # unattended. Without it the per-run gate above still applies.
+    auto_arm = os.environ.get('UNITREE_AUTO_ARM') == '1'
+    if auto_arm:
+        print('UNITREE_AUTO_ARM=1: arming without --robot-ack', flush=True)
+    elif args.robot_ack != REQUIRED_ROBOT_ACK:
         raise SystemExit(
             'Refusing to arm Unitree bridge: robot acknowledgement is invalid.\n'
             'Use --mode probe to check the link without arming anything.')
