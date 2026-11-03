@@ -1080,6 +1080,16 @@ class MqttMissionBridge(Node):
             self.localization_check = json.loads(msg.data)
         except ValueError:
             self.localization_check = None
+            return
+        # Sent for as long as AMCL stays out, so resuming from the web while it
+        # is still wrong pauses again rather than driving on a stale position.
+        if (self.localization_check.get('pause') and not self.paused
+                and self.worker is not None and self.worker.is_alive()):
+            self.paused = True
+            self._cancel_current()
+            self.get_logger().error(
+                'paused: AMCL is %.2f m from FAST-LIO - set the pose again'
+                % self.localization_check.get('distance', 0.0))
 
     def _set_initial_pose(self, data):
         """Tell AMCL where the robot is, from a click on the web map.
