@@ -25,10 +25,9 @@
    export UNITREE_AUTO_ARM=0
    ```
    เมื่อ auto arm ปิด คำสั่งเปิด bridge ต้องใส่ `--robot-ack` เอง
-5. เช็คเวลาและค่าบนบอร์ด เมื่อสแตกเปิดแล้ว:
+5. เมื่อสแตกเปิดแล้ว เช็คบนบอร์ด (ไม่ต้องแก้สคริปต์ อ่านค่าจาก `onsite.env` เอง):
    ```bash
-   date
-   ros2 param get /amcl alpha3
+   ./scripts/onsite_check.sh
    ```
 
 ## 2. ทำจุดอ้างอิงในแต่ละห้อง
@@ -68,6 +67,21 @@ ros2 launch go2_control onsite_stack.launch.py map:=$SITE_MAP replay:=false enab
 - [ ] ต่างต่อเนื่อง 3 วินาที: มิชชัน pause และกด Resume แล้วยัง pause อยู่
 - [ ] ตั้ง pose ใหม่แล้วกลับมาเดินต่อได้
 - [ ] ถ้าผิดปกติ ให้หยุดด้วยรีโมท แล้วกลับไป launch แบบไม่มีตัวกรอง
+
+## 5.0 ทดสอบหลบสิ่งกีดขวาง (ความเร็วไม่เกิน 0.2 m/s ถือรีโมท)
+ค่าหลักยังเป็น `tolerance 0.5` และ `inflation 0.35/0.40` ใช้เก็บเทียบได้ ส่วน profile ใช้ `tolerance 0.1` และ `inflation 0.50`
+```bash
+ros2 launch go2_control onsite_stack.launch.py map:=$SITE_MAP replay:=false nav2_params_file:=nav2_livox_go2_obstacle.yaml
+```
+ถ้าจะลองของเตี้ย:
+```bash
+ros2 launch go2_control onsite_stack.launch.py map:=$SITE_MAP replay:=false nav2_params_file:=nav2_livox_go2_obstacle_low.yaml enable_scan_low:=true
+```
+1. หุ่นนิ่ง วางกล่องสูงกว่า 25 cm ห่าง 1 m แล้วดูว่าขึ้นใน `/local_costmap/costmap` และหายเมื่อเอาออก
+2. กล่องกลางทาง 3 รอบ: อ้อมได้ไม่แตะ จดระยะใกล้สุด
+3. กล่องทับเป้า 3 รอบ: หุ่นต้องหยุด และมิชชันขึ้น `FAILED`
+4. ผ่านทางแคบข้างโต๊ะ 3 รอบ: ถ้าไม่ผ่าน ให้ลอง `inflation_radius` ต่ำลง
+5. ของเตี้ย: ดูว่าพื้นไม่ขึ้นเป็นของ และถ้าขึ้นให้ปรับ `min_height` ใน `pc2scan_livox_low.yaml`
 
 ## 5.1 ทดสอบอื่น ๆ
 - [ ] ตั้ง pose ซ้ำ 3 รอบ โดยไม่ restart สแตก แล้วเดินสั้น ๆ
