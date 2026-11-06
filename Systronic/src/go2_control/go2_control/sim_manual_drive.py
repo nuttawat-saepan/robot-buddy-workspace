@@ -1,7 +1,9 @@
-"""Drive the simulated box by hand from a small web page. Simulation only.
+"""Drive the simulated box by hand. Simulation only.
 
-    browser -> this node -> /cmd_vel_nav_preview -> sensor_watchdog
-            -> collision_guard -> sim_actuator -> the box
+    this node's page at :8077  \
+                                -> this node -> /cmd_vel_nav_preview
+    the web page's Joystick tab /       -> sensor_watchdog -> collision_guard
+      (MQTT cmd_vel via backend)          -> sim_actuator -> the box
 
 Started only by sim_obstacle.launch.py. Commands go in where Nav2's do, so the
 watchdog and the guard both apply. It publishes neither /cmd_vel nor
@@ -161,6 +163,19 @@ class Deadman:
         self.at = None
 
 
+def joystick_command(payload):
+    """(linear, angular) from the web page's MQTT cmd_vel, or None.
+
+    The backend forwards {"linear": {"x": ...}, "angular": {"z": ...}} in m/s
+    and rad/s, already scaled by the page's speed slider.
+    """
+    try:
+        data = json.loads(payload)
+        return data['linear']['x'], data['angular']['z']
+    except (ValueError, TypeError, KeyError):
+        return None
+
+
 def status_text(goal_active, guard_reason):
     """(message for the operator, whether driving is being refused)."""
     if goal_active:
@@ -179,6 +194,8 @@ class SimManualDrive(Node):
         self.max_angular = float(declare('max_angular', 0.60).value)
         host = declare('host', '127.0.0.1').value
         port = int(declare('port', 8077).value)
+        mqtt_broker = declare('mqtt_broker', '127.0.0.1').value
+        mqtt_topic = declare('mqtt_topic', 'cmd_vel').value
 
         self.lock = threading.Lock()
         self.deadman = Deadman(float(declare('timeout', 0.40).value))
@@ -236,11 +253,36 @@ class SimManualDrive(Node):
             def log_message(self, *_args):
                 pass
 
+        self._listen_to_joystick(mqtt_broker, mqtt_topic)
+
         self.server = ThreadingHTTPServer((host, port), Handler)
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.get_logger().info(
             'simulation only - drive page at http://%s:%d' % (host, port))
+
+    def _listen_to_joystick(self, broker, topic):
+        """Take the main page's Joystick tab as well, through the broker."""
+        try:
+            import paho.mqtt.client as mqtt
+        except ImportError:
+            self.get_logger().warn('paho-mqtt missing: no Joystick tab')
+            return
+
+        def on_message(_client, _userdata, msg):
+            command = joystick_command(msg.payload.decode(errors='replace'))
+            if command is not None:
+                self.drive(*command)
+
+        self.mqtt = mqtt.Client()
+        self.mqtt.on_connect = lambda client, *_: client.subscribe(topic)
+        self.mqtt.on_message = on_message
+        try:
+            self.mqtt.connect(broker, 1883)
+        except OSError as error:
+            self.get_logger().warn('no broker for the Joystick tab: %s' % error)
+            return
+        self.mqtt.loop_start()
 
     def drive(self, linear, angular):
         linear = limit(linear, self.max_linear)

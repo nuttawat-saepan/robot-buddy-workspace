@@ -5,7 +5,8 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from go2_control.sim_manual_drive import Deadman, limit, status_text
+from go2_control.sim_manual_drive import (
+    Deadman, joystick_command, limit, status_text)
 
 
 class Limit(unittest.TestCase):
@@ -36,6 +37,18 @@ class DeadmanTimer(unittest.TestCase):
         deadman.set(0.2, 0.1, 100.0)
         deadman.clear()
         self.assertIsNone(deadman.current(100.1))
+
+
+class Joystick(unittest.TestCase):
+
+    def test_reads_what_the_backend_forwards(self):
+        self.assertEqual(joystick_command(
+            '{"linear": {"x": 0.4, "y": 0, "z": 0},'
+            ' "angular": {"x": 0, "y": 0, "z": -0.4}}'), (0.4, -0.4))
+
+    def test_anything_else_is_ignored(self):
+        for bad in ('', 'stop', '{"linear": 1}', '[]'):
+            self.assertIsNone(joystick_command(bad))
 
 
 class Status(unittest.TestCase):
