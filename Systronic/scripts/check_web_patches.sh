@@ -29,8 +29,9 @@ check "old map text gone" fe_lacks 'The robot republishes the map every 30 secon
 check "Robot settings needs no typed token (demo)" fe_matches 'useState\("demo"\)'
 
 echo "Backend ($APP/backend, $APP/config)"
-check "settings demo switch in the controller" \
-      grep -rqs "ROBOT_SETTINGS_AUTH" "$APP/backend/dist/robot-settings"
+# The build may be one bundled dist/main.js or one file per module.
+check "settings demo switch in the backend build" \
+      grep -rqs "ROBOT_SETTINGS_AUTH" "$APP/backend/dist"
 check "demo switch turned on in backend.env" \
       grep -qs '^ROBOT_SETTINGS_AUTH=off' "$APP/config/backend.env"
 
