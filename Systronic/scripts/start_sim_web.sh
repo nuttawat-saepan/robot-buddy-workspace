@@ -3,6 +3,7 @@
 #
 #     scripts/start_sim_web.sh                 the obstacle test room
 #     scripts/start_sim_web.sh meeting_room    the meeting room map of 2026-11-04
+#     scripts/start_sim_web.sh meeting_room slam   make a map instead: open /slam
 #
 # Ctrl-C stops all of it. Set the pose on the web page, as on site: the robot
 # starts at x 2, y 0 in the test room and x -0.3, y -1.0 in the meeting room, facing
@@ -26,8 +27,10 @@ export LIO_SENSOR_X=0.30
 echo "simulation, not the robot: ROS domain $ROS_DOMAIN_ID, no /cmd_vel, no bridge"
 echo "drive by hand: http://127.0.0.1:8077"
 ROOM="${1:-obstacle_room}"
+SLAM=false
+[ "$2" = slam ] && SLAM=true && echo "map page: http://127.0.0.1:5173/slam"
 START_X=2.0 START_Y=0.0
 # The only spot near the first waypoint with 0.4 m clear all round.
 [ "$ROOM" = meeting_room ] && START_X=-0.3 START_Y=-1.0
 exec ros2 launch go2_control sim_obstacle.launch.py web:=true gui:=true \
-    room:="$ROOM" start_x:="$START_X" start_y:="$START_Y"
+    room:="$ROOM" start_x:="$START_X" start_y:="$START_Y" slam:="$SLAM"

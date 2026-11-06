@@ -98,6 +98,7 @@ setup(
         'sim_obstacle_test = go2_control.sim_obstacle_test:main',
         'sim_manual_drive = go2_control.sim_manual_drive:main',
         'sim_map_world = go2_control.sim_map_world:main',
+        'map_maker = go2_control.map_maker:main',
         'nav_ready_check = go2_control.nav_ready_check:main',
         'localization_watch = go2_control.localization_watch:main',
         'send_mission = go2_control.send_mission:main',

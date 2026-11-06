@@ -19,7 +19,7 @@ from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
                             SetEnvironmentVariable, TimerAction)
 from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -41,6 +41,10 @@ def generate_launch_description():
     web = LaunchConfiguration('web')
     gui = LaunchConfiguration('gui')
     room = LaunchConfiguration('room')
+    slam = LaunchConfiguration('slam')
+    # AMCL and map_server stand down while slam_toolbox draws the map.
+    localising = IfCondition(PythonExpression(
+        ["'", web, "' == 'true' and '", slam, "' != 'true'"]))
 
     nodes = [
         Node(package='tf2_ros', executable='static_transform_publisher',
@@ -51,11 +55,20 @@ def generate_launch_description():
         # pose from the web page like it does on site.
         Node(package='nav2_amcl', executable='amcl', name='amcl', output='log',
              parameters=[os.path.join(share, 'config', 'amcl_livox.yaml'), sim],
-             condition=IfCondition(web)),
+             condition=localising),
         Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',
              name='lifecycle_manager_amcl', output='log',
              parameters=[sim, {'autostart': True, 'node_names': ['amcl']}],
-             condition=IfCondition(web)),
+             condition=localising),
+        Node(package='go2_control', executable='map_maker', name='map_maker',
+             output='log', parameters=[sim, {
+                 'map_dir': os.path.expanduser('~/maps_sim'),
+                 'slam_command': (
+                     'ros2 run slam_toolbox async_slam_toolbox_node --ros-args'
+                     ' -r __node:=slam_toolbox --params-file '
+                     + os.path.join(share, 'config', 'slam_livox.yaml')
+                     + ' -p use_sim_time:=true')}],
+             condition=IfCondition(slam)),
         Node(package='go2_control', executable='mqtt_mission_bridge',
              name='mqtt_mission_bridge', output='log',
              parameters=[sim, {'broker': '127.0.0.1', 'port': 1883}],
@@ -79,13 +92,14 @@ def generate_launch_description():
              parameters=[os.path.join(share, 'pc2scan_livox_lio.yaml'), sim],
              remappings=[('cloud_in', '/livox/lidar'), ('scan', '/scan')]),
         Node(package='nav2_map_server', executable='map_server',
-             name='map_server', output='log',
+             name='map_server', output='log', condition=UnlessCondition(slam),
              parameters=[sim, {'yaml_filename': [
                  os.path.join(share, 'map', ''), room, '.yaml']}]),
         Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',
              name='lifecycle_manager_map', output='log',
              parameters=[sim, {'autostart': True,
-                               'node_names': ['map_server']}]),
+                               'node_names': ['map_server']}],
+             condition=UnlessCondition(slam)),
         Node(package='go2_control', executable='sensor_watchdog',
              name='sensor_watchdog', output='log', parameters=[wall]),
         Node(package='go2_control', executable='collision_guard',
@@ -130,6 +144,10 @@ def generate_launch_description():
             'room', default_value='obstacle_room',
             description='A world and map of this name: obstacle_room, or '
                         'meeting_room from go2_control.sim_map_world.'),
+        DeclareLaunchArgument(
+            'slam', default_value='false',
+            description='Make a map instead of using one: no AMCL or '
+                        'map_server, and the map page at :8093/slam.'),
         DeclareLaunchArgument('start_x', default_value='2.0'),
         DeclareLaunchArgument('start_y', default_value='0.0'),
         DeclareLaunchArgument('delay', default_value='0.15'),
