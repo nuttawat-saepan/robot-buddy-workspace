@@ -39,7 +39,7 @@ pc2scan_livox_lio:
 
     # FIELD: raise until the Go2 body stops appearing in /scan. On the handheld
     # bags this only has to clear the operator.
-    range_min: 0.5
+    range_min: 0.4
     # Well past the 24 x 20 m room in livox_02loop. AMCL clamps to
     # laser_max_range in amcl_livox.yaml anyway.
     range_max: 40.0

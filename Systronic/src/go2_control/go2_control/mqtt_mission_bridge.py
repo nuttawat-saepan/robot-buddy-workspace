@@ -73,6 +73,8 @@ from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 
 import tf2_ros
@@ -191,10 +193,86 @@ def _clamp(name, value):
     return value, None
 
 
-
 def yaw_to_quaternion(yaw):
     import math
     return math.sin(yaw / 2.0), math.cos(yaw / 2.0)
+
+
+class GuardHold:
+    """How long the collision guard has been refusing commands, without a break.
+
+    Going by the count as well as the flag: the guard's flag stays set after it
+    last refused until a command passes, so a mission paused with nothing being
+    sent would otherwise look held.
+    """
+
+    def __init__(self):
+        self.since = None
+        self.last_count = 0
+
+    def update(self, stopped, stop_commands, now):
+        refusing = bool(stopped) and stop_commands > self.last_count
+        self.last_count = stop_commands
+        if not refusing:
+            self.since = None
+        elif self.since is None:
+            self.since = now
+
+    def seconds(self, now):
+        return 0.0 if self.since is None else now - self.since
+
+
+def scan_points(scan, x, y, yaw, max_range):
+    """A LaserScan's returns within max_range, as (x, y) in the frame of (x, y, yaw).
+
+    inf is "nothing there" and is left out, which is why this reads the scan
+    and not the costmap: Nav2 does not clear a cell along a ray that returns
+    inf, so a costmap keeps something that has gone for as long as nothing
+    stands behind where it was.
+    """
+    points = []
+    for index, distance in enumerate(scan.ranges):
+        if not scan.range_min <= distance <= min(scan.range_max, max_range):
+            continue
+        angle = yaw + scan.angle_min + index * scan.angle_increment
+        points.append((x + distance * math.cos(angle),
+                       y + distance * math.sin(angle)))
+    return points
+
+
+def new_obstacle_near(points, static_map, x, y, radius, wall_margin=0.30,
+                      min_points=3):
+    """Say whether something not on the map is within radius of a point.
+
+    points is the latest scan in the frame of the map, an OccupancyGrid. A point
+    within wall_margin of a map wall counts as that wall, because the scan lands
+    off the drawn wall by the localisation error, 0.3 m on average here, and
+    that alone must not end a mission. min_points keeps one stray return from
+    doing it either. None means there is no scan or map, so nothing can be said.
+    """
+    if points is None or static_map is None:
+        return None
+    info = static_map.info
+    res = info.resolution
+    margin = int(round(wall_margin / res))
+
+    def on_wall(px, py):
+        col = int(math.floor((px - info.origin.position.x) / res))
+        row = int(math.floor((py - info.origin.position.y) / res))
+        for r in range(max(row - margin, 0), min(row + margin + 1, info.height)):
+            for c in range(max(col - margin, 0),
+                           min(col + margin + 1, info.width)):
+                if static_map.data[r * info.width + c] >= 65:
+                    return True
+        return False
+
+    count = 0
+    for px, py in points:
+        if math.hypot(px - x, py - y) <= radius and not on_wall(px, py):
+            count += 1
+            if count >= min_points:
+                return True
+    return False
 
 
 class MqttMissionBridge(Node):
@@ -302,6 +380,7 @@ class MqttMissionBridge(Node):
         self._live_goal_yaw = None
         self.goal_handle = None
         self.worker = None
+        self.last_run_id = None
 
         # Made here rather than on demand: the MQTT thread is the only
         # caller and a client created from it, after rclpy.spin has the
@@ -341,6 +420,37 @@ class MqttMissionBridge(Node):
         self.map_payload = None
         self.create_subscription(
             OccupancyGrid, '/map', self._on_map, map_qos)
+        self.static_grid = None
+        self.create_subscription(
+            OccupancyGrid, '/map',
+            lambda msg: setattr(self, 'static_grid', msg), map_qos)
+        self.last_scan = None
+        self.last_scan_at = None
+        self.create_subscription(
+            LaserScan, '/scan', self._on_scan, qos_profile_sensor_data)
+        self.map_wall_margin = float(self.declare_parameter(
+            'map_wall_margin', 0.30).value)
+        # What the costmap's obstacle layer is set to mark.
+        self.obstacle_range = float(self.declare_parameter(
+            'obstacle_range', 6.0).value)
+        self.obstacle_wait = float(self.declare_parameter(
+            'obstacle_wait_seconds', 30.0).value)
+        # The body's corners sweep 0.43 m, so it does not fit at the waypoint
+        # with anything nearer. The scan sees only the near face of an obstacle,
+        # which is further from the waypoint the bigger the obstacle is.
+        self.obstacle_radius = float(self.declare_parameter(
+            'obstacle_radius', 0.50).value)
+        # Close to a goal the robot's own returns land near it too.
+        self.obstacle_ignore_within = float(self.declare_parameter(
+            'obstacle_ignore_within', 0.6).value)
+        self.fail_reason = None
+        self.blocked_during_goal = False
+        # Nav2's spin and backup recoveries have no timeout, so a robot the
+        # collision guard is holding would wait on them for as long as the
+        # thing stays there, with the web still saying it was on its way.
+        self.guard_hold = GuardHold()
+        self.create_subscription(
+            String, '/collision_guard/status', self._on_guard_status, 10)
         self.create_timer(self.map_period, self._publish_map)
 
         self.get_logger().info(
@@ -406,6 +516,12 @@ class MqttMissionBridge(Node):
             return
 
         if msg.topic == '/missions/start':
+            # A retained or redelivered start must not move the robot again.
+            run_id = data.get('runId')
+            if msg.retain or (run_id and run_id == self.last_run_id):
+                self.get_logger().warn('ignored a repeated mission start')
+                return
+            self.last_run_id = run_id
             self._start_mission(data)
         elif msg.topic == '/missions/control':
             self._control(data)
@@ -463,6 +579,10 @@ class MqttMissionBridge(Node):
         # own in the protocol, and a page cannot infer it from RUNNING alone.
         self._publish(self.state_topic, {
             'hasMission': bool(self.mission),
+            # hasMission outlives the run; this is whether one is going.
+            'missionRunning': bool(self.worker is not None
+                                   and self.worker.is_alive()),
+            'spreadLimit': SPREAD_LIMIT_M,
             'runId': m.get('runId'),
             'missionId': m.get('missionId'),
             'paused': bool(self.paused),
@@ -751,6 +871,8 @@ class MqttMissionBridge(Node):
                     % (self.spread, SPREAD_LIMIT_M))
             self.get_logger().warn('mission refused: ' + note)
             self._status('FAILED', note)
+            # Refused is not started: the same run may be sent again.
+            self.last_run_id = None
             with self.lock:
                 self.mission = None
             return
@@ -808,12 +930,14 @@ class MqttMissionBridge(Node):
             self._progress(index, name, int(index * 100 / total),
                            'Going to %s' % name)
 
-            ok = self._go_to(wp)
+            self.fail_reason = None
+            ok = self._go_when_clear(wp, index, name, int(index * 100 / total))
             if self.stopping:
                 self._status('CANCELLED', 'Stopped by operator')
                 return
             if not ok:
-                self._status('FAILED', 'Could not reach %s' % name)
+                self._status('FAILED',
+                             self.fail_reason or 'Could not reach %s' % name)
                 return
 
             if wp.get('isCapture'):
@@ -874,6 +998,72 @@ class MqttMissionBridge(Node):
                        'Finish: progress = 100')
         self._status('COMPLETED', 'Mission complete')
 
+    def _on_scan(self, msg):
+        self.last_scan = msg
+        self.last_scan_at = time.monotonic()
+
+    def _goal_blocked(self, wp):
+        """Say whether an obstacle not on the map is sitting on this waypoint."""
+        x, y = float(wp.get('x', 0.0)), float(wp.get('y', 0.0))
+        scan = self.last_scan
+        if scan is None or time.monotonic() - self.last_scan_at > 2.0:
+            return False
+        try:
+            robot = self.tf_buffer.lookup_transform(
+                self.frame, self.base_frame, rclpy.time.Time())
+            sensor = self.tf_buffer.lookup_transform(
+                self.frame, scan.header.frame_id, rclpy.time.Time())
+        except Exception:                          # noqa: BLE001
+            return False
+        # Close to a goal the robot's own returns land near it too.
+        if math.hypot(robot.transform.translation.x - x,
+                      robot.transform.translation.y - y) \
+                < self.obstacle_ignore_within:
+            return False
+        q = sensor.transform.rotation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                         1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        points = scan_points(scan, sensor.transform.translation.x,
+                             sensor.transform.translation.y, yaw,
+                             self.obstacle_range)
+        return bool(new_obstacle_near(points, self.static_grid, x, y,
+                                      self.obstacle_radius,
+                                      self.map_wall_margin))
+
+    def _go_when_clear(self, wp, index, name, percent):
+        """Drive to a waypoint, waiting while an obstacle sits on it.
+
+        Nav2 alone would try to get as close as it can, spin, back up and try
+        again. Waiting ends the mission if the obstacle stays.
+        """
+        deadline = None
+        while not self.stopping:
+            if self._goal_blocked(wp):
+                now = time.monotonic()
+                if deadline is None:
+                    deadline = now + self.obstacle_wait
+                    note = 'Waiting: obstacle at %s' % name
+                    self.get_logger().warn(note)
+                    self._progress(index, name, percent, note)
+                if now >= deadline:
+                    self.fail_reason = (
+                        'Obstacle at %s did not clear in %d s'
+                        % (name, self.obstacle_wait))
+                    self.get_logger().warn(self.fail_reason)
+                    return False
+                time.sleep(0.5)
+                continue
+            if deadline is not None:
+                self._progress(index, name, percent, 'Going to %s' % name)
+            self.blocked_during_goal = False
+            ok = self._go_to(wp)
+            if ok or self.stopping or not self.blocked_during_goal:
+                return ok
+            # Cancelled for an obstacle that appeared on the way: the wait
+            # runs from when it was seen.
+            deadline = None
+        return False
+
     def _go_to(self, wp):
         goal = NavigateToPose.Goal()
         pose = PoseStamped()
@@ -904,11 +1094,34 @@ class MqttMissionBridge(Node):
         self.goal_handle = handle
 
         result_future = handle.get_result_async()
+        next_check = time.monotonic() + 0.5
         while not result_future.done() and rclpy.ok():
             time.sleep(0.1)
+            if not self.blocked_during_goal and time.monotonic() >= next_check:
+                next_check = time.monotonic() + 0.5
+                if self._goal_blocked(wp):
+                    self.blocked_during_goal = True
+                    handle.cancel_goal_async()
+                elif self.guard_hold.seconds(time.monotonic()) \
+                        >= self.obstacle_wait:
+                    self.fail_reason = (
+                        'Stopped by an obstacle for %d s'
+                        % self.obstacle_wait)
+                    self.get_logger().warn(self.fail_reason)
+                    handle.cancel_goal_async()
+                    # Do not cancel it again every half second.
+                    next_check = math.inf
         self.goal_handle = None
         result = result_future.result()
         return result is not None and result.status == GoalStatus.STATUS_SUCCEEDED
+
+    def _on_guard_status(self, msg):
+        try:
+            status = json.loads(msg.data)
+        except ValueError:
+            return
+        self.guard_hold.update(status.get('stopped'),
+                               status.get('stopCommands', 0), time.monotonic())
 
     def _on_nav_feedback(self, msg):
         """Forward Nav2's per-goal numbers to the web, once a second."""
@@ -1106,8 +1319,12 @@ class MqttMissionBridge(Node):
         """
         from geometry_msgs.msg import PoseWithCovarianceStamped
         note = None
-        if self.mission is not None and not self.stopping:
+        # self.mission outlives the run so a page opened later can still read
+        # it, so only a live worker means a mission is running.
+        running = self.worker is not None and self.worker.is_alive()
+        if running and not self.stopping:
             note = 'a mission is running - initial pose refused'
+            self.get_logger().warn(note)
         else:
             try:
                 x = float(data['x'])

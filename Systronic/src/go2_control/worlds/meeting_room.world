@@ -1,0 +1,2 @@
+<?xml version="1.0"?>
+<sdf version="1.6"><world name="meeting_room"><include><uri>model://ground_plane</uri></include><include><uri>model://sun</uri></include><plugin name="ros_init" filename="libgazebo_ros_init.so"/><plugin name="ros_factory" filename="libgazebo_ros_factory.so"/><model name="walls"><static>true</static><link name="link"><collision name="c"><geometry><mesh><uri>model://meeting_room_walls.stl</uri></mesh></geometry></collision><visual name="v"><geometry><mesh><uri>model://meeting_room_walls.stl</uri></mesh></geometry></visual></link></model></world></sdf>

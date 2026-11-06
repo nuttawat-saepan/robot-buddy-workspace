@@ -88,10 +88,17 @@ def _launch_setup(context, *args, **kwargs):
     # of one transform would make it jump between them. This has to go in the
     # file: a parameter dict is written under /**, and the file's named amcl
     # section beats that, so an override here would be silently ignored.
-    if arg('enable_localization_guard').lower() in ('true', '1'):
+    guard_on = arg('enable_localization_guard').lower() in ('true', '1')
+    amcl_own_scan = bool(arg('amcl_scan_min_height'))
+    if guard_on or amcl_own_scan:
         with open(amcl_param) as source:
             amcl_config = yaml.safe_load(source)
-        amcl_config['amcl']['ros__parameters']['tf_broadcast'] = False
+        if guard_on:
+            amcl_config['amcl']['ros__parameters']['tf_broadcast'] = False
+        if amcl_own_scan:
+            amcl_params = amcl_config['amcl']['ros__parameters']
+            amcl_params['scan_topic'] = '/scan_amcl'
+            amcl_params['laser_min_range'] = farg('amcl_scan_range_min')
         guarded = tempfile.NamedTemporaryFile(
             'w', prefix='amcl_guarded_', suffix='.yaml', delete=False)
         yaml.safe_dump(amcl_config, guarded)
@@ -227,6 +234,10 @@ def generate_launch_description():
             description='true hands map->odom to localization_watch, which '
                         'refuses AMCL corrections beyond its limit.'),
         DeclareLaunchArgument('scan_topic', default_value='/scan'),
+        DeclareLaunchArgument(
+            'amcl_scan_min_height', default_value='',
+            description='Set to make AMCL read /scan_amcl instead of /scan.'),
+        DeclareLaunchArgument('amcl_scan_range_min', default_value='0.5'),
         DeclareLaunchArgument('odom_topic', default_value='/odom'),
         DeclareLaunchArgument('map_frame', default_value='map'),
         DeclareLaunchArgument('odom_frame', default_value='odom'),

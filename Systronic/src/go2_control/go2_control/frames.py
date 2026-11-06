@@ -88,3 +88,21 @@ def lio_bridges(pitch_deg, roll_deg, sensor_height, sensor_x=None):
                      for i in range(3))
 
     return ((0.0, 0.0, 0.0) + odom_ypr, body_xyz + body_ypr)
+
+
+def scan_band_params(path, min_height, max_height, range_min=None):
+    """Return pc2scan_livox_lio.yaml's parameters with the height band replaced.
+
+    As a plain dict, because a launch parameter dict is written under /** and a
+    named section in a file beats that: min_height passed beside the file is
+    accepted and silently ignored.
+    """
+    import yaml
+    with open(path) as source:
+        config = yaml.safe_load(source)
+    params = dict(config['pc2scan_livox_lio']['ros__parameters'])
+    params['min_height'] = min_height
+    params['max_height'] = max_height
+    if range_min is not None:
+        params['range_min'] = range_min
+    return params

@@ -50,8 +50,9 @@ from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
                             TimerAction)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -69,6 +70,11 @@ def generate_launch_description():
             'replay': arg('replay'),
             'enable_cmd_vel': 'false',
             'enable_scan_low': arg('enable_scan_low'),
+            'scan_min_height': arg('scan_min_height'),
+            'scan_max_height': arg('scan_max_height'),
+            'amcl_scan_min_height': arg('amcl_scan_min_height'),
+            'amcl_scan_max_height': arg('amcl_scan_max_height'),
+            'amcl_scan_range_min': arg('amcl_scan_range_min'),
             'lio_pitch_deg': arg('lio_pitch_deg'),
             'lio_roll_deg': arg('lio_roll_deg'),
             'sensor_height': arg('sensor_height'),
@@ -83,6 +89,8 @@ def generate_launch_description():
             'map': arg('map'),
             'enable_rviz': 'false',
             'enable_localization_guard': arg('enable_localization_guard'),
+            'amcl_scan_min_height': arg('amcl_scan_min_height'),
+            'amcl_scan_range_min': arg('amcl_scan_range_min'),
             # Passed explicitly, and it must be. livox_robot.launch.py is
             # included first and declares a cmd_vel_topic of its own, meaning
             # the watchdog's *output*, /cmd_vel_safe. That value lands in the
@@ -106,11 +114,35 @@ def generate_launch_description():
         output='screen',
     )
 
+    # The last gate before the relay. With it on, the relay reads only what the
+    # guard lets through, so a dead guard stops the robot on the bridge's own
+    # command timeout rather than leaving it unguarded.
+    guard = Node(
+        package='go2_control',
+        executable='collision_guard',
+        name='collision_guard',
+        output='screen',
+        parameters=[{
+            # Wall time, like sensor_watchdog, even during a replay.
+            'use_sim_time': False,
+            'mount_pitch_deg': ParameterValue(arg('lio_pitch_deg'),
+                                              value_type=float),
+            'mount_roll_deg': ParameterValue(arg('lio_roll_deg'),
+                                             value_type=float),
+            'sensor_height': ParameterValue(arg('sensor_height'),
+                                            value_type=float),
+        }],
+        condition=IfCondition(arg('enable_collision_guard')),
+    )
+
     relay = Node(
         package='go2_control',
         executable='cmd_vel_udp_relay',
         name='cmd_vel_udp_relay',
         output='screen',
+        parameters=[{'input_topic': PythonExpression([
+            "'/cmd_vel_guarded' if '", arg('enable_collision_guard'),
+            "'.lower() == 'true' else '/cmd_vel_safe'"])}],
         condition=IfCondition(arg('enable_relay')),
     )
 
@@ -119,7 +151,8 @@ def generate_launch_description():
         executable='mqtt_mission_bridge',
         name='mqtt_mission_bridge',
         output='screen',
-        parameters=[{'broker': arg('mqtt_broker')}],
+        parameters=[{'broker': arg('mqtt_broker'),
+                     'port': ParameterValue(arg('mqtt_port'), value_type=int)}],
         condition=IfCondition(arg('enable_web')),
     )
 
@@ -130,6 +163,8 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'guard': arg('enable_localization_guard'),
+            'distance_limit': ParameterValue(arg('localization_limit'),
+                                             value_type=float),
             'use_sim_time': arg('replay'),
         }],
     )
@@ -165,6 +200,25 @@ def generate_launch_description():
             'enable_scan_low', default_value='false',
             description='Publish /scan_low. Pair with '
                         'nav2_livox_go2_obstacle_low.yaml.'),
+        DeclareLaunchArgument(
+            'scan_min_height', default_value='0.25',
+            description='Bottom of /scan, which the costmap avoids obstacles '
+                        'with, in metres.'),
+        DeclareLaunchArgument('scan_max_height', default_value='1.05'),
+        DeclareLaunchArgument(
+            'amcl_scan_min_height', default_value='',
+            description='Give AMCL its own /scan_amcl from this height, above '
+                        'furniture. The map must be built from the same band: '
+                        'mapping_stack with scan_min_height and '
+                        'scan_max_height.'),
+        DeclareLaunchArgument('amcl_scan_max_height', default_value='1.8'),
+        DeclareLaunchArgument(
+            'amcl_scan_range_min', default_value='0.5',
+            description='Nearest /scan_amcl return AMCL may use, metres.'),
+        DeclareLaunchArgument('mqtt_port', default_value='1883'),
+        DeclareLaunchArgument(
+            'localization_limit', default_value='1.0',
+            description='How far AMCL may move the robot from FAST-LIO, metres.'),
         DeclareLaunchArgument('enable_web', default_value='true'),
         DeclareLaunchArgument('enable_capture', default_value='true'),
         DeclareLaunchArgument(
@@ -173,6 +227,11 @@ def generate_launch_description():
                         'its own it moves nothing - the Unitree bridge on the '
                         'far end of that port is what does, and it is not '
                         'started here.'),
+        DeclareLaunchArgument(
+            'enable_collision_guard', default_value='true',
+            description='Stop commands that would take the body within 0.20 m '
+                        'of something. Off makes the relay read /cmd_vel_safe '
+                        'directly, with nothing to stop a collision.'),
         DeclareLaunchArgument(
             'capture_source', default_value='rtsp',
             description='rtsp is the only source that works on this robot: '
@@ -192,5 +251,5 @@ def generate_launch_description():
         TimerAction(period=15.0, actions=[ground]),
 
         # And the rest once there is a map and a pose to work with.
-        TimerAction(period=25.0, actions=[map_points, relay, web, capture, watch]),
+        TimerAction(period=25.0, actions=[map_points, guard, relay, web, capture, watch]),
     ])

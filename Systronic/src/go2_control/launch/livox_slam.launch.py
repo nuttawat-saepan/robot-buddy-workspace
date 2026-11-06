@@ -55,7 +55,7 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from go2_control.frames import lio_bridges
+from go2_control.frames import lio_bridges, scan_band_params
 
 
 def _launch_setup(context, *args, **kwargs):
@@ -119,7 +119,9 @@ def _launch_setup(context, *args, **kwargs):
                 ('cloud_in', arg('cloud_topic')),
                 ('scan', arg('scan_topic')),
             ],
-            parameters=[pc2scan_param,
+            parameters=[scan_band_params(pc2scan_param,
+                                         farg('scan_min_height'),
+                                         farg('scan_max_height')),
                         {'use_sim_time': use_sim_time,
                          'target_frame': base_frame}],
         ),
@@ -158,6 +160,11 @@ def generate_launch_description():
             description='Cloud to project. The FAST-LIO deskewed cloud, not '
                         'the raw /livox/lidar.'),
         DeclareLaunchArgument('scan_topic', default_value='/scan'),
+        DeclareLaunchArgument(
+            'scan_min_height', default_value='0.25',
+            description='Bottom of the band the map is built from, metres. '
+                        'Localising later must use this same band.'),
+        DeclareLaunchArgument('scan_max_height', default_value='1.05'),
         DeclareLaunchArgument(
             'lio_pitch_deg', default_value='10.26',
             description='Sensor tilt to undo, positive nose-down. 10.26 is '

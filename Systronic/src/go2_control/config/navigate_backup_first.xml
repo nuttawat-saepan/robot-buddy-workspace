@@ -1,0 +1,39 @@
+<!--
+  Foxy's navigate_w_replanning_and_recovery.xml with a step back before the spin.
+
+  The collision guard can stop the robot too close to something to turn: the
+  corners sweep 0.43 m from its middle, so a flat face 0.46 m ahead leaves 3 cm.
+  DWB cannot reverse (min_vel_x 0) and the stock recovery only spins, so a robot
+  stopped there stayed there until the goal was cancelled. Found in Gazebo on
+  2026-11-05, scenario popup_close.
+
+  Backing is slow, because the Mid-360's mount cannot see low things behind it.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="FollowPath">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <SequenceStar name="RecoveryActions">
+          <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+          <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+          <BackUp backup_dist="-0.30" backup_speed="-0.10"/>
+          <Spin spin_dist="1.57"/>
+          <Wait wait_duration="5"/>
+        </SequenceStar>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

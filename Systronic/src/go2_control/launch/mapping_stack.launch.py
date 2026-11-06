@@ -97,6 +97,8 @@ def generate_launch_description():
             'lio_roll_deg': arg('lio_roll_deg'),
             'sensor_height': arg('sensor_height'),
             'enable_rviz': arg('enable_rviz'),
+            'scan_min_height': arg('scan_min_height'),
+            'scan_max_height': arg('scan_max_height'),
         }.items(),
     )
 
@@ -104,6 +106,8 @@ def generate_launch_description():
         DeclareLaunchArgument('lio_pitch_deg', default_value='13.0'),
         DeclareLaunchArgument('lio_roll_deg', default_value='0.0'),
         DeclareLaunchArgument('sensor_height', default_value='0.35'),
+        DeclareLaunchArgument('scan_min_height', default_value='0.25'),
+        DeclareLaunchArgument('scan_max_height', default_value='1.05'),
         DeclareLaunchArgument(
             'enable_driver', default_value='true',
             description='false to build a map from a replayed bag instead of '

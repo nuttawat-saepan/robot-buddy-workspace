@@ -50,7 +50,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
-from go2_control.frames import lio_bridges
+from go2_control.frames import lio_bridges, scan_band_params
 
 
 def _launch_setup(context, *args, **kwargs):
@@ -81,6 +81,23 @@ def _launch_setup(context, *args, **kwargs):
     armed = cmd_vel_topic in ('/cmd_vel', 'cmd_vel')
 
     nodes = []
+
+    # A second projection for AMCL alone, so it can look above furniture that
+    # moves while /scan stays low enough for the costmap to avoid that same
+    # furniture. Off unless amcl_scan_min_height is given.
+    if arg('amcl_scan_min_height'):
+        nodes.append(Node(
+            package='pointcloud_to_laserscan',
+            executable='pointcloud_to_laserscan_node',
+            name='pc2scan_livox_amcl', output='screen',
+            remappings=[('cloud_in', arg('cloud_topic')),
+                        ('scan', '/scan_amcl')],
+            parameters=[scan_band_params(pc2scan_param,
+                                         farg('amcl_scan_min_height'),
+                                         farg('amcl_scan_max_height'),
+                                         farg('amcl_scan_range_min')),
+                        common, {'target_frame': base_frame}],
+        ))
 
     # Replaying a bag on Foxy needs a clock: ros2 bag play gained --clock only
     # in Galactic. bag_clock is started here rather than on the ground station
@@ -146,7 +163,10 @@ def _launch_setup(context, *args, **kwargs):
             name='pc2scan_livox_lio', output='screen',
             remappings=[('cloud_in', arg('cloud_topic')),
                         ('scan', arg('scan_topic'))],
-            parameters=[pc2scan_param, common, {'target_frame': base_frame}],
+            parameters=[scan_band_params(pc2scan_param,
+                                         farg('scan_min_height'),
+                                         farg('scan_max_height')),
+                        common, {'target_frame': base_frame}],
         ),
 
         Node(
@@ -243,6 +263,23 @@ def generate_launch_description():
         DeclareLaunchArgument('cloud_topic',
                               default_value='/cloud_registered_body'),
         DeclareLaunchArgument('scan_topic', default_value='/scan'),
+        DeclareLaunchArgument(
+            'scan_min_height', default_value='0.25',
+            description='Bottom of the /scan band in base_link, metres.'),
+        DeclareLaunchArgument(
+            'scan_max_height', default_value='1.05',
+            description='Top of the /scan band in base_link, metres.'),
+        DeclareLaunchArgument(
+            'amcl_scan_min_height', default_value='',
+            description='Set to publish /scan_amcl from this height. The map '
+                        'must have been built from the same band.'),
+        DeclareLaunchArgument(
+            'amcl_scan_max_height', default_value='1.8',
+            description='Top of the /scan_amcl band in base_link, metres.'),
+        DeclareLaunchArgument(
+            'amcl_scan_range_min', default_value='0.5',
+            description='Nearest /scan_amcl return AMCL may use, from the '
+                        'centre of the robot, metres.'),
         DeclareLaunchArgument(
             'enable_scan_low', default_value='false',
             description='Publish /scan_low for low obstacles in the costmaps. '

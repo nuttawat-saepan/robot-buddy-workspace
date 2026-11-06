@@ -60,7 +60,7 @@ from tf2_ros import Buffer, TransformListener
 
 # Above this the cloud is still hunting rather than tracking. AMCL on the
 # 02_loop replay settles well below it within a few metres of walking.
-SPREAD_LIMIT_M = 0.35
+SPREAD_LIMIT_M = float(os.environ.get('GO2_SPREAD_LIMIT_M', '0.50'))
 
 
 class NavReadyCheck(Node):
