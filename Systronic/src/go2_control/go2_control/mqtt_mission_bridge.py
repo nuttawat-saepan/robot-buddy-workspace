@@ -71,6 +71,7 @@ import rclpy
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose, Spin
+from rcl_interfaces.msg import Log
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -201,6 +202,13 @@ def yaw_to_quaternion(yaw):
 SCAN_MAX_POINTS = 240
 # A page repeats want_scan more often than this while it shows the scan.
 SCAN_WANTED_S = 10.0
+
+
+def nav_failure_reason(name, remaining, dropped):
+    """Why Nav2 stopped: the tree dropped the goal, or the robot got no closer."""
+    if dropped:
+        return 'Nav2 dropped the goal for %s' % name
+    return 'Nav2 gave up on %s with %.2f m left' % (name, remaining)
 
 
 def turn_needed(yaw, dx, dy):
@@ -354,6 +362,8 @@ class MqttMissionBridge(Node):
             'turn_min_angle_deg', 60.0).value))
         self.turn_timeout = float(self.declare_parameter(
             'turn_timeout_seconds', 20.0).value)
+        self._goal_dropped_at = None
+        self.create_subscription(Log, '/rosout', self._on_rosout, 50)
         self.turn_skip_within = float(self.declare_parameter(
             'turn_skip_within', 0.25).value)
         self._last_live = None
@@ -1285,10 +1295,18 @@ class MqttMissionBridge(Node):
         replaced = self.mission is None or self.mission.get('runId') != run_id
         if not ok and not self.fail_reason and not self.stopping and not replaced \
                 and not self.blocked_during_goal and self._last_live:
-            self.fail_reason = 'Nav2 gave up on %s with %.2f m left' % (
+            # The log line and the result arrive separately.
+            time.sleep(0.3)
+            self.fail_reason = nav_failure_reason(
                 wp.get('name', 'the waypoint'),
-                self._last_live['distanceRemaining'])
+                self._last_live['distanceRemaining'],
+                self._goal_dropped_at is not None
+                and time.monotonic() - self._goal_dropped_at < 3.0)
         return ok
+
+    def _on_rosout(self, msg):
+        if 'send_goal failed' in msg.msg:
+            self._goal_dropped_at = time.monotonic()
 
     def _on_guard_status(self, msg):
         try:

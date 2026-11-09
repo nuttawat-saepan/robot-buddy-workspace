@@ -110,7 +110,9 @@ def _launch_setup(context, *args, **kwargs):
     # filename aborts the whole lifecycle bringup during configure.
     bt_xml = arg('bt_xml')
     if not os.path.isabs(bt_xml):
-        bt_xml = os.path.join(
+        ours = os.path.join(
+            get_package_share_directory('go2_control'), 'config', bt_xml)
+        bt_xml = ours if os.path.exists(ours) else os.path.join(
             get_package_share_directory('nav2_bt_navigator'),
             'behavior_trees', bt_xml)
 
@@ -219,7 +221,7 @@ def generate_launch_description():
                               default_value='nav2_livox_go2.yaml'),
         DeclareLaunchArgument(
             'bt_xml',
-            default_value='navigate_w_replanning_and_recovery.xml'),
+            default_value='navigate_replanning_timeout.xml'),
         DeclareLaunchArgument(
             'replay', default_value='true',
             description='Follow the bag clock. Must match '
