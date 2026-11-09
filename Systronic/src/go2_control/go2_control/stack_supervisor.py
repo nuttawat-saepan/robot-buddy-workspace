@@ -618,6 +618,8 @@ class Supervisor:
         })
 
     def arm(self, confirm, for_mission=False):
+        if self.args.read_only:
+            raise ApplyError(409, 'simulation: there is no motion bridge to arm')
         """Start the bridge after checks. It moves the robot: stand, balance."""
         if confirm != ARM_CONFIRM:
             raise ApplyError(422, 'confirm must be ' + ARM_CONFIRM)
@@ -929,6 +931,9 @@ class Supervisor:
                                             allow)
             self.busy = ''
             if any(FIELDS[k][3] == 'restart' for k in keys):
+                if self.args.read_only:
+                    raise ApplyError(409, 'simulation: this setting needs a '
+                                          'stack restart, which only the robot does')
                 if self.mission_active():
                     raise ApplyError(409, 'a mission or Nav2 goal is active')
                 if not set(keys) <= BRIDGE_ONLY and not self.obs.stationary():
@@ -1056,6 +1061,9 @@ def main():
     parser.add_argument('--ready-timeout', type=int, default=90)
     parser.add_argument('--nav2-base', default='nav2_livox_go2_obstacle.yaml',
                         help='Nav2 config the settings are written over.')
+    parser.add_argument('--read-only', action='store_true',
+                        help='Beside the simulation: show values and apply '
+                             'live ones, but never restart a stack or arm.')
     parser.add_argument('--auto-arm', action='store_true',
                         help='Arm the bridge when the web starts a mission, '
                              'after preflight. Starting a mission then moves '
