@@ -3,8 +3,8 @@
 #
 #     systemd-run --user --unit go2-sim-supervisor scripts/start_sim_supervisor.sh
 #
-# Read-only: live values can be applied, but it never restarts a stack or arms
-# the bridge, because the stack it would start is the robot's and not the sim's.
+# Apply restarts the simulation with the new values (about a minute, and the
+# position has to be set again). It never arms a motion bridge.
 # The backend finds it through ROBOT_SUPERVISOR_URL=http://127.0.0.1:8091.
 WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source /opt/ros/foxy/setup.bash
@@ -14,5 +14,7 @@ export FASTRTPS_DEFAULT_PROFILES_FILE="$WS/src/go2_control/config/fastdds_udp_on
 export ROS_DOMAIN_ID=77
 export MQTT_BROKER=127.0.0.1
 export STACK_SUPERVISOR_TOKEN="$(sed -n 's/^ROBOT_SUPERVISOR_TOKEN=//p' "$HOME/robot-app/config/backend.env")"
-exec ros2 run go2_control stack_supervisor --read-only \
-    --state-dir "$HOME/stack_settings_sim" --bag-dir ""
+exec ros2 run go2_control stack_supervisor --sim \
+    --state-dir "$HOME/stack_settings_sim" --bag-dir "" \
+    --env-script /dev/null \
+    --bridge-script "$HOME/stack_settings_sim/start_bridge.sh"

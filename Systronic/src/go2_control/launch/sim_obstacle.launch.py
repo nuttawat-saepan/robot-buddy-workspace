@@ -31,7 +31,8 @@ def generate_launch_description():
     share = get_package_share_directory('go2_control')
     gazebo_share = get_package_share_directory('gazebo_ros')
     bt_xml = os.path.join(share, 'config', 'navigate_backup_first.xml')
-    nav2_params = os.path.join(share, 'config', 'nav2_livox_go2.yaml')
+    nav2_params = LaunchConfiguration('nav2_params_file')
+    amcl_params = LaunchConfiguration('amcl_params_file')
     sim = {'use_sim_time': True}
     wall = {'use_sim_time': False}
 
@@ -54,7 +55,7 @@ def generate_launch_description():
         # With the web, localisation is the real AMCL, and it needs the initial
         # pose from the web page like it does on site.
         Node(package='nav2_amcl', executable='amcl', name='amcl', output='log',
-             parameters=[os.path.join(share, 'config', 'amcl_livox.yaml'), sim],
+             parameters=[amcl_params, sim],
              condition=localising),
         Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',
              name='lifecycle_manager_amcl', output='log',
@@ -148,6 +149,12 @@ def generate_launch_description():
             'slam', default_value='false',
             description='Make a map instead of using one: no AMCL or '
                         'map_server, and the map page at :8093/slam.'),
+        DeclareLaunchArgument(
+            'nav2_params_file',
+            default_value=os.path.join(share, 'config', 'nav2_livox_go2.yaml')),
+        DeclareLaunchArgument(
+            'amcl_params_file',
+            default_value=os.path.join(share, 'config', 'amcl_livox.yaml')),
         DeclareLaunchArgument('start_x', default_value='2.0'),
         DeclareLaunchArgument('start_y', default_value='0.0'),
         DeclareLaunchArgument('delay', default_value='0.15'),

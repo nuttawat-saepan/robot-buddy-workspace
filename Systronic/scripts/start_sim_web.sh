@@ -33,4 +33,4 @@ START_X=2.0 START_Y=0.0
 # The only spot near the first waypoint with 0.4 m clear all round.
 [ "$ROOM" = meeting_room ] && START_X=-0.3 START_Y=-1.0
 exec ros2 launch go2_control sim_obstacle.launch.py web:=true gui:=true \
-    room:="$ROOM" start_x:="$START_X" start_y:="$START_Y" slam:="$SLAM"
+    room:="$ROOM" start_x:="$START_X" start_y:="$START_Y" slam:="$SLAM" "${@:3}"

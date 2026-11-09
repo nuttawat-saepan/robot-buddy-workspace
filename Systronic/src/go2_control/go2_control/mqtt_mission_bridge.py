@@ -199,6 +199,8 @@ def yaw_to_quaternion(yaw):
 
 
 SCAN_MAX_POINTS = 240
+# A page repeats want_scan more often than this while it shows the scan.
+SCAN_WANTED_S = 10.0
 
 
 def turn_needed(yaw, dx, dy):
@@ -455,6 +457,7 @@ class MqttMissionBridge(Node):
         # True once anyone sets a pose (web, RViz, AprilTag). A cloud alone does
         # not count: at startup AMCL has a tight cloud around its default pose.
         self.pose_set = False
+        self.scan_until = 0.0
         self.last_scan = None
         self.last_scan_at = None
         self.create_subscription(
@@ -573,6 +576,8 @@ class MqttMissionBridge(Node):
             self.get_logger().warn('stopped by the web')
         elif action == 'set_initial_pose':
             self._set_initial_pose(data)
+        elif action == 'want_scan':
+            self.scan_until = time.monotonic() + SCAN_WANTED_S
         elif action == 'get_state':
             self._publish_state()
         elif action == 'get_params':
@@ -1545,12 +1550,13 @@ class MqttMissionBridge(Node):
     def _publish_scan(self):
         """The scan in map coordinates, so the web can lay it over the map.
 
-        Only between missions, when an operator is checking the position, and
+        Only while a page is showing it (each page repeats want_scan), and
         thinned to a few hundred points to stay light on Wi-Fi.
         """
         scan = self.last_scan
-        worker = getattr(self, 'worker', None)
-        if scan is None or time.monotonic() - self.last_scan_at > 2.0                 or (worker is not None and worker.is_alive()):
+        now = time.monotonic()
+        if scan is None or now >= self.scan_until \
+                or now - self.last_scan_at > 2.0:
             return
         try:
             sensor = self.tf_buffer.lookup_transform(
@@ -1563,7 +1569,7 @@ class MqttMissionBridge(Node):
         points = scan_points(scan, sensor.transform.translation.x,
                              sensor.transform.translation.y, yaw,
                              self.obstacle_range * 2)
-        step = max(1, len(points) // SCAN_MAX_POINTS)
+        step = max(1, math.ceil(len(points) / SCAN_MAX_POINTS))
         self._publish(self.scan_topic,
                       {'frame': self.frame,
                        'points': [[round(x, 2), round(y, 2)]

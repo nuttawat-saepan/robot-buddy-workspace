@@ -618,7 +618,7 @@ class Supervisor:
         })
 
     def arm(self, confirm, for_mission=False):
-        if self.args.read_only:
+        if self.args.sim:
             raise ApplyError(409, 'simulation: there is no motion bridge to arm')
         """Start the bridge after checks. It moves the robot: stand, balance."""
         if confirm != ARM_CONFIRM:
@@ -728,7 +728,7 @@ class Supervisor:
             'revision': revision_of(self.settings),
             'observedAt': iso(min(observed, time.time())),
             'missionActive': self.mission_active(),
-            'stationary': obs.stationary(),
+            'stationary': self._still(),
             'bridgeArmed': bool(armed),
             'rearmRequired': self.rearm_required,
             'values': {k: round(v, 4) for k, v in values.items()},
@@ -738,9 +738,32 @@ class Supervisor:
 
     # ------------------------------------------------------------ doing it
 
+    def _still(self):
+        # FAST-LIO needs a still robot to start; the simulation's stack has none.
+        return self.args.sim or self.obs.stationary()
+
     def _stack(self):
+        launch = 'sim_obstacle' if self.args.sim else 'onsite_stack'
         return command_lines(r'/usr/bin/python3 /opt/ros/foxy/bin/ros2 launch '
-                             r'go2_control onsite_stack')
+                             r'go2_control ' + launch)
+
+    def _start_sim(self, settings, files, log):
+        """Restart the simulation with these settings instead of the robot's stack."""
+        env = ('export GO2_SPREAD_LIMIT_M=%s DISPLAY=:0 '
+               'XAUTHORITY=/run/user/%d/gdm/Xauthority;'
+               % (settings['localization_spread_limit'], os.getuid()))
+        self._spawn(['bash', self.args.sim_script, self.args.sim_room, '',
+                     'nav2_params_file:=' + files['nav2'],
+                     'amcl_params_file:=' + files['amcl']], log, env)
+        deadline = time.time() + self.args.ready_timeout
+        while time.time() < deadline:
+            time.sleep(1)
+            with open(log, errors='replace') as source:
+                if source.read().count(READY_LINE) >= 2:
+                    # The bridge reports the limit only once it has started.
+                    time.sleep(5)
+                    return ''
+        return 'not ready after %d s, see %s' % (self.args.ready_timeout, log)
 
     def _stop_bag(self):
         for pid, _ in command_lines(r'/usr/bin/python3 /opt/ros/foxy/bin/ros2 '
@@ -826,6 +849,8 @@ class Supervisor:
                 yaml.safe_dump(builder(base, settings), stream)
         stamp = time.strftime('%Y%m%d_%H%M%S')
         log = os.path.join(self.args.log_dir, 'onsite_stack_%s.log' % stamp)
+        if self.args.sim:
+            return self._start_sim(settings, files, log)
         env = 'export GO2_SPREAD_LIMIT_M=%s;' % settings[
             'localization_spread_limit']
         self._spawn(launch_args(settings, self._map_yaml(), files['amcl'],
@@ -858,6 +883,9 @@ class Supervisor:
     def _verify(self, settings, keys):
         """Return the keys whose live value differs from settings."""
         deadline = time.time() + 15
+        if self.args.sim:
+            # The simulation has no second scan for AMCL to read back from.
+            keys = [k for k in keys if k in self.obs.values]
         wrong = list(keys)
         while time.time() < deadline and wrong:
             time.sleep(2.2)
@@ -931,12 +959,9 @@ class Supervisor:
                                             allow)
             self.busy = ''
             if any(FIELDS[k][3] == 'restart' for k in keys):
-                if self.args.read_only:
-                    raise ApplyError(409, 'simulation: this setting needs a '
-                                          'stack restart, which only the robot does')
                 if self.mission_active():
                     raise ApplyError(409, 'a mission or Nav2 goal is active')
-                if not set(keys) <= BRIDGE_ONLY and not self.obs.stationary():
+                if not set(keys) <= BRIDGE_ONLY and not self._still():
                     raise ApplyError(409, 'the IMU does not show the robot still')
                 self.last_error = ''
                 try:
@@ -1061,9 +1086,12 @@ def main():
     parser.add_argument('--ready-timeout', type=int, default=90)
     parser.add_argument('--nav2-base', default='nav2_livox_go2_obstacle.yaml',
                         help='Nav2 config the settings are written over.')
-    parser.add_argument('--read-only', action='store_true',
-                        help='Beside the simulation: show values and apply '
-                             'live ones, but never restart a stack or arm.')
+    parser.add_argument('--sim', action='store_true',
+                        help='Beside the simulation: Apply restarts the '
+                             'simulation, and the motion bridge cannot be armed.')
+    parser.add_argument('--sim-room', default='meeting_room')
+    parser.add_argument('--sim-script', default=os.path.join(
+        home, 'projects/systonic-2307/Systronic/scripts/start_sim_web.sh'))
     parser.add_argument('--auto-arm', action='store_true',
                         help='Arm the bridge when the web starts a mission, '
                              'after preflight. Starting a mission then moves '
