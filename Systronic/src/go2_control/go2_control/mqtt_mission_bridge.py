@@ -70,7 +70,7 @@ import time
 import rclpy
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
-from nav2_msgs.action import NavigateToPose
+from nav2_msgs.action import NavigateToPose, Spin
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -199,6 +199,12 @@ def yaw_to_quaternion(yaw):
 
 
 SCAN_MAX_POINTS = 240
+
+
+def turn_needed(yaw, dx, dy):
+    """Radians to turn, shortest way, to face a point dx, dy away."""
+    bearing = math.atan2(dy, dx)
+    return math.atan2(math.sin(bearing - yaw), math.cos(bearing - yaw))
 
 
 class GuardHold:
@@ -336,6 +342,19 @@ class MqttMissionBridge(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
         self.nav = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+        # Nav2's own spin, so a turn goes through the watchdog and collision
+        # guard like any other Nav2 command and this node still publishes no
+        # velocity.
+        self.spin = ActionClient(self, Spin, 'spin')
+        self.turn_before_goal = bool(self.declare_parameter(
+            'turn_before_goal', True).value)
+        self.turn_min_angle = math.radians(float(self.declare_parameter(
+            'turn_min_angle_deg', 60.0).value))
+        self.turn_timeout = float(self.declare_parameter(
+            'turn_timeout_seconds', 20.0).value)
+        self.turn_skip_within = float(self.declare_parameter(
+            'turn_skip_within', 0.25).value)
+        self._last_live = None
 
         self.capture_pub = self.create_publisher(
             String, '/mission/capture_request', 10)
@@ -583,7 +602,11 @@ class MqttMissionBridge(Node):
         self._publish_params()
         m = self.mission or {}
         if self.last_status:
-            self._publish(m.get('statusTopic'), self.last_status)
+            # Without its message: this repeat would overwrite the newer text
+            # the web already has from progress, such as "Turning toward".
+            self._publish(m.get('statusTopic'),
+                          {k: v for k, v in self.last_status.items()
+                           if k != 'message'})
         if self.last_progress:
             self._publish(m.get('progressTopic'), self.last_progress)
         # Sent even when nothing is running, so the page can tell "no mission"
@@ -1069,13 +1092,88 @@ class MqttMissionBridge(Node):
             if deadline is not None:
                 self._progress(index, name, percent, 'Going to %s' % name)
             self.blocked_during_goal = False
-            ok = self._go_to(wp)
+            self._turn_toward(wp, index, name, percent)
+            if self.stopping:
+                return False
+            arrive_yaw = self._arrival_yaw(wp)
+            started = time.monotonic()
+            ok = self._go_to(wp, arrive_yaw)
+            # Foxy's BT navigator can drop a fresh goal at once with "send_goal
+            # failed" when a server is slow to answer. That is not the goal
+            # being unreachable, so send it again.
+            for _ in range(2):
+                if ok or self.stopping or self.blocked_during_goal \
+                        or time.monotonic() - started >= 4.0:
+                    break
+                self.get_logger().warn('Nav2 dropped %s at once, retrying' % name)
+                self.fail_reason = None
+                time.sleep(1.0)
+                started = time.monotonic()
+                ok = self._go_to(wp, arrive_yaw)
+            if ok and arrive_yaw is not None and not self.stopping:
+                self._progress(index, name, percent, 'Turning at %s' % name)
+                self._spin_to_yaw(float(wp.get('yaw', 0.0)))
             if ok or self.stopping or not self.blocked_during_goal:
                 return ok
             # Cancelled for an obstacle that appeared on the way: the wait
             # runs from when it was seen.
             deadline = None
         return False
+
+    def _turn_toward(self, wp, index, name, percent):
+        """Face a waypoint that is behind the robot before driving to it.
+
+        DWB scores short forward arcs and this robot may not reverse, so a goal
+        close behind it can leave no arc worth taking: on 2026-11-09 a robot
+        0.59 m from a goal behind it stood still until Nav2 gave up. Foxy has
+        no rotation shim to do this. Best effort: if the turn is refused or
+        held up, Nav2 gets the goal as it always did.
+        """
+        if not self.turn_before_goal:
+            return
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                self.frame, self.base_frame, rclpy.time.Time())
+        except Exception:                          # noqa: BLE001
+            return
+        dx = float(wp.get('x', 0.0)) - tf.transform.translation.x
+        dy = float(wp.get('y', 0.0)) - tf.transform.translation.y
+        yaw = self._current_yaw()
+        if yaw is None or math.hypot(dx, dy) < self.turn_skip_within:
+            return
+        angle = turn_needed(yaw, dx, dy)
+        if abs(angle) < self.turn_min_angle:
+            return
+        note = 'Turning toward %s' % name
+        self.get_logger().info('%s: %.0f deg' % (note, math.degrees(angle)))
+        self._progress(index, name, percent, note)
+        self._spin(angle)
+        self._progress(index, name, percent, 'Going to %s' % name)
+
+    def _spin(self, angle):
+        """Turn on the spot through Nav2; gives up quietly if refused or held."""
+        if not self.spin.wait_for_server(timeout_sec=2.0):
+            return
+        goal = Spin.Goal()
+        goal.target_yaw = float(angle)
+        send = self.spin.send_goal_async(goal)
+        while not send.done() and rclpy.ok():
+            time.sleep(0.05)
+        handle = send.result()
+        if handle is None or not handle.accepted:
+            return
+        result = handle.get_result_async()
+        deadline = time.monotonic() + self.turn_timeout
+        # Spin has no timeout of its own, and the collision guard can hold it.
+        while not result.done() and rclpy.ok():
+            if self.stopping or self.paused \
+                    or time.monotonic() >= deadline \
+                    or self.guard_hold.seconds(time.monotonic()) >= 2.0:
+                handle.cancel_goal_async()
+                break
+            time.sleep(0.1)
+        while self.paused and not self.stopping:
+            time.sleep(0.2)
 
     def _publish_wait(self, name, now, deadline):
         """Tell the web how long an obstacle on a waypoint has been waited for."""
@@ -1095,14 +1193,48 @@ class MqttMissionBridge(Node):
         self.last_progress = payload
         self._publish(m.get('progressTopic'), payload)
 
-    def _go_to(self, wp):
+    def _arrival_yaw(self, wp):
+        """The heading to arrive with, when the waypoint's own is the wrong way.
+
+        A goal whose heading points back the way the robot came fails the same
+        way a goal behind it does, about 0.3 m out. Arrive facing forward and
+        turn on the spot instead. None when the waypoint's heading is fine.
+        """
+        if not self.turn_before_goal:
+            return None
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                self.frame, self.base_frame, rclpy.time.Time())
+        except Exception:                          # noqa: BLE001
+            return None
+        dx = float(wp.get('x', 0.0)) - tf.transform.translation.x
+        dy = float(wp.get('y', 0.0)) - tf.transform.translation.y
+        if math.hypot(dx, dy) < self.turn_skip_within:
+            return None
+        bearing = math.atan2(dy, dx)
+        if abs(turn_needed(float(wp.get('yaw', 0.0)), dx, dy)) <= math.pi / 2:
+            return None
+        return bearing
+
+    def _spin_to_yaw(self, target):
+        yaw = self._current_yaw()
+        if yaw is None:
+            return
+        angle = math.atan2(math.sin(target - yaw), math.cos(target - yaw))
+        if abs(angle) >= 0.05:
+            self._spin(angle)
+
+    def _go_to(self, wp, arrive_yaw=None):
         goal = NavigateToPose.Goal()
         pose = PoseStamped()
         pose.header.frame_id = self.frame
         pose.header.stamp = self.get_clock().now().to_msg()
         pose.pose.position.x = float(wp.get('x', 0.0))
         pose.pose.position.y = float(wp.get('y', 0.0))
-        z, w = yaw_to_quaternion(float(wp.get('yaw', 0.0)))
+        run_id = (self.mission or {}).get('runId')
+        self._last_live = None
+        goal_yaw = float(wp.get('yaw', 0.0)) if arrive_yaw is None else arrive_yaw
+        z, w = yaw_to_quaternion(goal_yaw)
         pose.pose.orientation.z = z
         pose.pose.orientation.w = w
         goal.pose = pose
@@ -1114,7 +1246,7 @@ class MqttMissionBridge(Node):
         # does not report it at all, and on 2026-09-14 every failure to
         # finish a goal turned out to be the heading rather than the
         # position.
-        self._live_goal_yaw = float(wp.get('yaw', 0.0))
+        self._live_goal_yaw = goal_yaw
         send = self.nav.send_goal_async(
             goal, feedback_callback=self._on_nav_feedback)
         while not send.done() and rclpy.ok():
@@ -1144,7 +1276,14 @@ class MqttMissionBridge(Node):
                     next_check = math.inf
         self.goal_handle = None
         result = result_future.result()
-        return result is not None and result.status == GoalStatus.STATUS_SUCCEEDED
+        ok = result is not None and result.status == GoalStatus.STATUS_SUCCEEDED
+        replaced = self.mission is None or self.mission.get('runId') != run_id
+        if not ok and not self.fail_reason and not self.stopping and not replaced \
+                and not self.blocked_during_goal and self._last_live:
+            self.fail_reason = 'Nav2 gave up on %s with %.2f m left' % (
+                wp.get('name', 'the waypoint'),
+                self._last_live['distanceRemaining'])
+        return ok
 
     def _on_guard_status(self, msg):
         try:
@@ -1188,6 +1327,7 @@ class MqttMissionBridge(Node):
                         'missionId': m.get('missionId'),
                         'live': live})
         self.last_progress = payload
+        self._last_live = live
         self._publish(m.get('progressTopic'), payload)
 
     def _current_yaw(self):
