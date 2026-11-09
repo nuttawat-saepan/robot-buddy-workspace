@@ -198,6 +198,9 @@ def yaw_to_quaternion(yaw):
     return math.sin(yaw / 2.0), math.cos(yaw / 2.0)
 
 
+SCAN_MAX_POINTS = 240
+
+
 class GuardHold:
     """How long the collision guard has been refusing commands, without a break.
 
@@ -346,6 +349,9 @@ class MqttMissionBridge(Node):
         from rclpy.qos import QoSProfile as _Qos, ReliabilityPolicy as _Rel
         self.initialpose_pub = self.create_publisher(
             PoseWithCovarianceStamped, '/initialpose', 10)
+        self.create_subscription(
+            PoseWithCovarianceStamped, '/initialpose',
+            self._on_initial_pose, 10)
         # The particle cloud's spread is how the web knows whether a pose it
         # sent has taken: AMCL scatters the particles over the covariance
         # given and pulls them in as the scan agrees with the map. Best
@@ -408,6 +414,9 @@ class MqttMissionBridge(Node):
         self._connect_mqtt()
 
         self.create_timer(self.pose_period, self._publish_pose)
+        self.scan_topic = str(self.declare_parameter(
+            'scan_topic', '/missions/scan').value)
+        self.create_timer(0.5, self._publish_scan)
 
         # Subscribed transient local, because map_server publishes /map once
         # when it activates and latches it - a volatile subscriber connecting
@@ -424,6 +433,9 @@ class MqttMissionBridge(Node):
         self.create_subscription(
             OccupancyGrid, '/map',
             lambda msg: setattr(self, 'static_grid', msg), map_qos)
+        # True once anyone sets a pose (web, RViz, AprilTag). A cloud alone does
+        # not count: at startup AMCL has a tight cloud around its default pose.
+        self.pose_set = False
         self.last_scan = None
         self.last_scan_at = None
         self.create_subscription(
@@ -1045,6 +1057,7 @@ class MqttMissionBridge(Node):
                     note = 'Waiting: obstacle at %s' % name
                     self.get_logger().warn(note)
                     self._progress(index, name, percent, note)
+                self._publish_wait(name, now, deadline)
                 if now >= deadline:
                     self.fail_reason = (
                         'Obstacle at %s did not clear in %d s'
@@ -1063,6 +1076,24 @@ class MqttMissionBridge(Node):
             # runs from when it was seen.
             deadline = None
         return False
+
+    def _publish_wait(self, name, now, deadline):
+        """Tell the web how long an obstacle on a waypoint has been waited for."""
+        if now - self._last_feedback < 1.0:
+            return
+        self._last_feedback = now
+        m = self.mission or {}
+        payload = dict(self.last_progress or {})
+        payload.update({'runId': m.get('runId'),
+                        'missionId': m.get('missionId'),
+                        'live': {
+                            'blockedAt': name,
+                            'blockedSeconds': int(
+                                self.obstacle_wait - (deadline - now)),
+                            'obstacleWaitSeconds': int(self.obstacle_wait),
+                        }})
+        self.last_progress = payload
+        self._publish(m.get('progressTopic'), payload)
 
     def _go_to(self, wp):
         goal = NavigateToPose.Goal()
@@ -1135,6 +1166,10 @@ class MqttMissionBridge(Node):
             'distanceRemaining': round(float(fb.distance_remaining), 3),
             'navigationTime': int(fb.navigation_time.sec),
             'recoveries': int(fb.number_of_recoveries),
+            # The guard can hold the robot for obstacle_wait seconds before the
+            # mission fails; without this the web only hears about it at the end.
+            'guardHeldSeconds': int(self.guard_hold.seconds(now)),
+            'obstacleWaitSeconds': int(self.obstacle_wait),
         }
 
         yaw = self._current_yaw()
@@ -1304,6 +1339,13 @@ class MqttMissionBridge(Node):
                 'paused: AMCL is %.2f m from FAST-LIO - set the pose again'
                 % self.localization_check.get('distance', 0.0))
 
+    def _on_initial_pose(self, msg):
+        # init_pose seeds AMCL at the origin at startup. That is a default, not
+        # somebody saying where the robot is, and no real pose is exactly zero.
+        p = msg.pose.pose.position
+        if p.x != 0.0 or p.y != 0.0:
+            self.pose_set = True
+
     def _set_initial_pose(self, data):
         """Tell AMCL where the robot is, from a click on the web map.
 
@@ -1350,6 +1392,7 @@ class MqttMissionBridge(Node):
             msg.pose.covariance = cov
             self.initialpose_pub.publish(msg)
             self.spread = None     # the old cloud no longer means anything
+            self.pose_set = True
             self.get_logger().info(
                 'initial pose from the web: x=%.3f y=%.3f yaw=%.3f'
                 % (x, y, yaw))
@@ -1358,6 +1401,34 @@ class MqttMissionBridge(Node):
                             'x': data.get('x'), 'y': data.get('y'),
                             'yaw': data.get('yaw')},
             'timestamp': int(time.time())})
+
+    def _publish_scan(self):
+        """The scan in map coordinates, so the web can lay it over the map.
+
+        Only between missions, when an operator is checking the position, and
+        thinned to a few hundred points to stay light on Wi-Fi.
+        """
+        scan = self.last_scan
+        worker = getattr(self, 'worker', None)
+        if scan is None or time.monotonic() - self.last_scan_at > 2.0                 or (worker is not None and worker.is_alive()):
+            return
+        try:
+            sensor = self.tf_buffer.lookup_transform(
+                self.frame, scan.header.frame_id, rclpy.time.Time())
+        except Exception:                          # noqa: BLE001
+            return
+        q = sensor.transform.rotation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                         1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        points = scan_points(scan, sensor.transform.translation.x,
+                             sensor.transform.translation.y, yaw,
+                             self.obstacle_range * 2)
+        step = max(1, len(points) // SCAN_MAX_POINTS)
+        self._publish(self.scan_topic,
+                      {'frame': self.frame,
+                       'points': [[round(x, 2), round(y, 2)]
+                                  for x, y in points[::step]],
+                       'timestamp': int(time.time())})
 
     def _publish_pose(self):
         """Where the robot is, once a second, whether or not a mission runs.
@@ -1387,6 +1458,8 @@ class MqttMissionBridge(Node):
                       {'x': t.x, 'y': t.y, 'yaw': yaw, 'frame': self.frame,
                        'localizationSpread': (None if self.spread is None
                                               else round(self.spread, 3)),
+                       'poseSet': self.pose_set,
+                       'spreadLimit': SPREAD_LIMIT_M,
                        'localizationCheck': self.localization_check,
                        'timestamp': int(time.time())})
 
