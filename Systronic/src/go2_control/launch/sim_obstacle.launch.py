@@ -64,6 +64,8 @@ def generate_launch_description():
         Node(package='go2_control', executable='map_maker', name='map_maker',
              output='log', parameters=[sim, {
                  'map_dir': os.path.expanduser('~/maps_sim'),
+                 # A saved map has no Gazebo world to drive it in.
+                 'offer_use': False,
                  'slam_command': (
                      'ros2 run slam_toolbox async_slam_toolbox_node --ros-args'
                      ' -r __node:=slam_toolbox --params-file '

@@ -11,6 +11,8 @@ This runs beside the stack and owns it.
     PATCH /robot/settings   apply, verify by reading back, roll back on failure
     GET   /robot/preflight  why motion must not start now
     POST  /robot/bridge     {"action": "arm", "confirm": ...} or {"action": "disarm"}
+    GET   /robot/maps       the maps on this machine and the one in use
+    POST  /robot/map        {"name": ...} restart the stack on that map
 
 The backend reaches this with x-robot-settings-token. Set
 STACK_SUPERVISOR_TOKEN on the board; without it every request is refused.
@@ -32,6 +34,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -96,6 +99,59 @@ RUNAWAY_MPS = 1.0
 END_DISARM_S = 3.0
 IDLE_DISARM_S = 60.0
 ARM_CONFIRM = 'AREA_CLEAR_REMOTE_IN_HAND'
+
+
+MAP_NAME = re.compile(r'^[A-Za-z0-9_-]{1,60}$')
+
+
+def usable_map(path):
+    """True if a map yaml parses and the image it names exists."""
+    try:
+        with open(path) as stream:
+            image = yaml.safe_load(stream)['image']
+    except (OSError, yaml.YAMLError, KeyError, TypeError):
+        return False
+    return os.path.exists(os.path.join(os.path.dirname(path), str(image)))
+
+
+def maps_in(directory, wanted=None):
+    """Sorted names of the usable maps in a directory."""
+    try:
+        files = os.listdir(directory)
+    except OSError:
+        return []
+    names = []
+    for entry in files:
+        name, extension = os.path.splitext(entry)
+        if extension == '.yaml' and MAP_NAME.match(name) \
+                and (wanted is None or wanted(name)) \
+                and usable_map(os.path.join(directory, entry)):
+            names.append(name)
+    return sorted(names)
+
+
+def adopt_map(source, directory):
+    """Copy a map kept elsewhere into directory, so the list shows it.
+
+    Leaves a map of that name alone. The image line becomes a bare file name,
+    which is what map_server needs once the two files sit side by side.
+    """
+    name = os.path.splitext(os.path.basename(source))[0]
+    target = os.path.join(directory, name + '.yaml')
+    if os.path.exists(target) or not MAP_NAME.match(name) \
+            or not usable_map(source):
+        return
+    os.makedirs(directory, exist_ok=True)
+    with open(source) as stream:
+        text = stream.read()
+    image = str(yaml.safe_load(text)['image'])
+    bare = os.path.basename(image)
+    shutil.copy2(os.path.join(os.path.dirname(source), image),
+                 os.path.join(directory, bare))
+    text = re.sub(r'^image:.*$', 'image: ' + bare, text, flags=re.MULTILINE)
+    with open(target + '.tmp', 'w') as stream:
+        stream.write(text)
+    os.replace(target + '.tmp', target)
 
 
 class ApplyError(Exception):
@@ -528,6 +584,10 @@ class Supervisor:
         os.makedirs(args.state_dir, exist_ok=True)
         self.profile_file = os.path.join(args.state_dir, 'profile.json')
         self.settings = self._load()
+        self.selected_map_file = os.path.join(args.state_dir, 'selected_map')
+        site_map = args.map_yaml or os.environ.get('SITE_MAP', '')
+        if site_map and not args.sim:
+            adopt_map(site_map, self._map_dir())
         self.armed_at = 0.0
         self.run_seen = False
         self.idle_since = None
@@ -752,7 +812,7 @@ class Supervisor:
         env = ('export GO2_SPREAD_LIMIT_M=%s DISPLAY=:0 '
                'XAUTHORITY=/run/user/%d/gdm/Xauthority;'
                % (settings['localization_spread_limit'], os.getuid()))
-        self._spawn(['bash', self.args.sim_script, self.args.sim_room, '',
+        self._spawn(['bash', self.args.sim_script, self.active_map(), '',
                      'nav2_params_file:=' + files['nav2'],
                      'amcl_params_file:=' + files['amcl']], log, env)
         deadline = time.time() + self.args.ready_timeout
@@ -830,7 +890,107 @@ class Supervisor:
                              stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                              env=clean, start_new_session=True)
 
+    def _map_dir(self):
+        # The simulation can only drive a map that has a Gazebo world.
+        if self.args.sim:
+            return os.path.join(self.args.share, 'map')
+        return self.args.map_dir
+
+    def _has_world(self, name):
+        return os.path.exists(os.path.join(
+            self.args.share, 'worlds', name + '.world'))
+
+    def map_names(self):
+        return maps_in(self._map_dir(),
+                       self._has_world if self.args.sim else None)
+
+    def _selected_map(self):
+        try:
+            with open(self.selected_map_file) as stream:
+                return stream.read().strip()
+        except OSError:
+            return ''
+
+    def _select(self, name):
+        with open(self.selected_map_file + '.tmp', 'w') as stream:
+            stream.write(name)
+        os.replace(self.selected_map_file + '.tmp', self.selected_map_file)
+
+    def active_map(self):
+        """The map the stack runs on: the one chosen, else the configured one."""
+        selected = self._selected_map()
+        if selected and selected in self.map_names():
+            return selected
+        if self.args.sim:
+            return self.args.sim_room
+        source = self.args.map_yaml or os.environ.get('SITE_MAP', '')
+        return os.path.splitext(os.path.basename(source))[0]
+
+    def maps(self):
+        active = self.active_map()
+        names = self.map_names()
+        return {
+            'maps': sorted(set(names) | ({active} if active else set())),
+            'active': active,
+            'busy': self.busy,
+            'missionActive': self.mission_active(),
+            'lastError': self.last_error,
+        }
+
+    def select_map(self, body):
+        """Restart the stack on another map, going back if it does not come up."""
+        name = body.get('name') if isinstance(body, dict) else None
+        if not isinstance(name, str) or not MAP_NAME.match(name):
+            raise ApplyError(422, 'name must be the name of a map')
+        if not self.lock.acquire(blocking=False):
+            raise ApplyError(409, 'an apply is already running: ' + self.busy)
+        try:
+            previous = self.active_map()
+            if name == previous:
+                return self.maps()
+            if name not in self.map_names():
+                raise ApplyError(404, 'no map called %s' % name)
+            if command_lines(r'.*async_slam_toolbox_node'):
+                raise ApplyError(409, 'a map is being made, stop that first')
+            if self.mission_active():
+                raise ApplyError(409, 'a mission or Nav2 goal is active')
+            if not self._still():
+                raise ApplyError(409, 'the IMU does not show the robot still')
+            self.last_error = ''
+            try:
+                self._switch_map(name, previous)
+            finally:
+                self.busy = ''
+            return self.maps()
+        except ApplyError as exc:
+            self.last_error = exc.message
+            raise
+        finally:
+            self.lock.release()
+
+    def _switch_map(self, name, previous):
+        self.busy = 'stopping the bridge'
+        self._stop_bridge()
+        self._select(name)
+        self.busy = 'restarting the stack on %s, keep the robot still' % name
+        self._stop_stack()
+        problem = self._start_stack(self.settings)
+        if not problem:
+            return
+        self.busy = 'going back to %s' % previous
+        self._select(previous)
+        self._stop_stack()
+        again = self._start_stack(self.settings)
+        raise ApplyError(503, '%s; %s' % (
+            problem, 'back on %s, set the pose again' % previous if not again
+            else 'the previous map failed too: ' + again))
+
     def _map_yaml(self):
+        selected = self._selected_map()
+        if selected:
+            path = os.path.join(self._map_dir(), selected + '.yaml')
+            if usable_map(path):
+                return path
         env = self.args.map_yaml or os.environ.get('SITE_MAP', '')
         if not os.path.exists(env):
             raise ApplyError(503, 'map %r not found' % env)
@@ -1009,11 +1169,14 @@ def handler_for(supervisor, token):
             length = int(self.headers.get('Content-Length', 0) or 0)
             if length:
                 self.rfile.read(length)
-            if self.path not in ('/robot/settings', '/robot/preflight'):
+            if self.path not in ('/robot/settings', '/robot/preflight',
+                                 '/robot/maps'):
                 self._reply(404, {'message': 'not found'})
             elif self._allowed():
                 try:
-                    if self.path == '/robot/preflight':
+                    if self.path == '/robot/maps':
+                        self._reply(200, supervisor.maps())
+                    elif self.path == '/robot/preflight':
                         problems = supervisor.preflight()
                         self._reply(200, {'ok': not problems,
                                           'problems': problems,
@@ -1027,7 +1190,7 @@ def handler_for(supervisor, token):
         def do_POST(self):
             length = int(self.headers.get('Content-Length', 0) or 0)
             raw = self.rfile.read(length)
-            if self.path != '/robot/bridge':
+            if self.path not in ('/robot/bridge', '/robot/map'):
                 self._reply(404, {'message': 'not found'})
                 return
             if not self._allowed():
@@ -1036,7 +1199,9 @@ def handler_for(supervisor, token):
                 body = json.loads(raw)
                 if not isinstance(body, dict):
                     raise ValueError
-                if body.get('action') == 'arm':
+                if self.path == '/robot/map':
+                    self._reply(200, supervisor.select_map(body))
+                elif body.get('action') == 'arm':
                     self._reply(200, supervisor.arm(body.get('confirm')))
                 elif body.get('action') == 'disarm':
                     self._reply(200, supervisor.disarm())
@@ -1071,6 +1236,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('--port', type=int, default=8091)
     parser.add_argument('--map-yaml', default='')
+    parser.add_argument('--map-dir', default=os.path.join(home, 'maps'),
+                        help='The maps the web can choose from.')
     parser.add_argument('--log-dir', default=os.path.join(home, 'go2_logs'))
     parser.add_argument('--bag-dir', default=os.path.join(home, 'bags'),
                         help='Empty to record nothing.')

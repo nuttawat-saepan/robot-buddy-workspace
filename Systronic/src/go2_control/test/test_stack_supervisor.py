@@ -1,4 +1,6 @@
 """What the settings API may change, and what a restart is given."""
+import os
+
 import pytest
 
 from go2_control import stack_supervisor as ss
@@ -117,3 +119,53 @@ def test_preflight_stops_on_each_problem(change):
      'failed')])
 def test_localization_state_guides_the_operator(change, expected):
     assert ss.localization_state(dict(GOOD, **change))['state'] == expected
+
+
+def write_map(directory, name, image=None):
+    image_name = image or name + '.pgm'
+    if os.path.dirname(image_name) == '':
+        (directory / image_name).write_bytes(b'P5')
+    (directory / (name + '.yaml')).write_text(
+        'image: %s\nresolution: 0.05\n' % image_name)
+
+
+def test_maps_in_lists_only_maps_that_can_load(tmp_path):
+    write_map(tmp_path, 'site_b')
+    write_map(tmp_path, 'site_a')
+    (tmp_path / 'no_image.yaml').write_text('image: gone.pgm\n')
+    (tmp_path / 'not_a_map.yaml').write_text('resolution: 0.05\n')
+    (tmp_path / 'bad name.yaml').write_text('image: site_a.pgm\n')
+    assert ss.maps_in(str(tmp_path)) == ['site_a', 'site_b']
+
+
+def test_maps_in_a_missing_directory_is_empty(tmp_path):
+    assert ss.maps_in(str(tmp_path / 'nothing')) == []
+
+
+def test_maps_in_can_require_more(tmp_path):
+    write_map(tmp_path, 'site_a')
+    write_map(tmp_path, 'site_b')
+    assert ss.maps_in(str(tmp_path), lambda name: name == 'site_b') == ['site_b']
+
+
+def test_adopt_copies_a_map_kept_elsewhere(tmp_path):
+    source = tmp_path / 'backup'
+    source.mkdir()
+    (source / 'pics').mkdir()
+    (source / 'pics' / 'site.pgm').write_bytes(b'P5')
+    (source / 'site.yaml').write_text('image: pics/site.pgm\nresolution: 0.05\n')
+    maps = tmp_path / 'maps'
+    ss.adopt_map(str(source / 'site.yaml'), str(maps))
+    assert ss.maps_in(str(maps)) == ['site']
+    assert (maps / 'site.yaml').read_text().startswith('image: site.pgm\n')
+
+
+def test_adopt_leaves_a_map_of_that_name_alone(tmp_path):
+    source = tmp_path / 'backup'
+    source.mkdir()
+    write_map(source, 'site')
+    maps = tmp_path / 'maps'
+    maps.mkdir()
+    (maps / 'site.yaml').write_text('image: mine.pgm\n')
+    ss.adopt_map(str(source / 'site.yaml'), str(maps))
+    assert (maps / 'site.yaml').read_text() == 'image: mine.pgm\n'

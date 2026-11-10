@@ -8,7 +8,8 @@ it, so it shows up as http://<mini pc>:5173/slam beside the main page.
 Saving does the two things slam_toolbox's save leaves undone, both of which
 stopped the whole stack from coming up on 2026-09-14: the yaml's image line is
 made a bare file name next to the .pgm, and the result is checked to load. It
-does not point SITE_MAP at the new map; the page says so.
+does not start using the new map by itself: the page offers that once it is
+saved, through the supervisor, and the map is in the web's list either way.
 
 It refuses to start while AMCL is running. AMCL and slam_toolbox both publish
 map -> odom, and the navigation stack has to be stopped before mapping.
@@ -144,6 +145,7 @@ ol { padding-left:20px; color:var(--dim); font-size:14px; line-height:1.6; }
       <input id="name" placeholder="ชื่อแผนที่">
       <button id="save">2. บันทึกแผนที่</button>
       <button id="stop">3. หยุดทำแผนที่</button>
+      <button id="use" hidden>ใช้แผนที่นี้</button>
       <p id="saved"></p><p id="error"></p>
     </div>
     <div class="card" style="margin-top:16px">
@@ -171,6 +173,27 @@ const call = async (path, body) => {
   } catch (e) { el('error').textContent = 'ติดต่อตัวทำแผนที่ไม่ได้'; }
   poll();
 };
+const useMap = async () => {
+  const name = state.lastSaved.split('/').pop().replace('.yaml', '');
+  if (!confirm('ใช้แผนที่ ' + name + ' เลยไหม ระบบนำทางจะเริ่มใหม่ และต้อง Relocate ก่อนเริ่มมิชชัน')) return;
+  el('use').disabled = true;
+  el('error').textContent = '';
+  el('saved').textContent = 'กำลังเปิดระบบนำทางด้วยแผนที่ใหม่ ให้หุ่นอยู่นิ่ง อาจใช้เวลาหลายนาที';
+  try {
+    if (state.state === 'mapping')
+      await fetch('/slam/api/stop', {method: 'POST',
+        headers: {'Content-Type': 'application/json'}, body: '{}'});
+    const r = await fetch('/api/robot/map', {method: 'POST',
+      headers: {'Content-Type': 'application/json', 'x-robot-settings-token': 'demo'},
+      body: JSON.stringify({name})});
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) el('saved').textContent = 'ใช้แผนที่ ' + name + ' แล้ว กลับหน้าหลักแล้วกด Relocate ก่อนเริ่มมิชชัน';
+    else if (r.status === 401 || r.status === 403) el('error').textContent = 'เลือกแผนที่นี้จากหน้า Live map แทน';
+    else el('error').textContent = j.message || ('ไม่สำเร็จ ' + r.status);
+  } catch (e) { el('error').textContent = 'ติดต่อระบบไม่ได้'; }
+  el('use').disabled = false;
+};
+el('use').onclick = useMap;
 el('start').onclick = () => call('start');
 el('save').onclick = () => call('save', {name: el('name').value.trim()});
 el('stop').onclick = () => {
@@ -189,6 +212,7 @@ const poll = async () => {
   el('start').disabled = state.state !== 'idle';
   el('save').disabled = state.state !== 'mapping' || !state.hasMap;
   el('stop').disabled = state.state !== 'mapping';
+  el('use').hidden = !(state.offerUse && state.lastSaved);
   if (!el('name').value) el('name').value = state.suggestedName;
   if (state.hasMap) {
     const img = new Image();
@@ -211,6 +235,7 @@ class MapMaker(Node):
             'slam_command',
             'ros2 launch go2_control mapping_stack.launch.py replay:=false').value
         self.map_dir = os.path.expanduser(declare('map_dir', '~/maps').value)
+        self.offer_use = bool(declare('offer_use', True).value)
         host = declare('host', '127.0.0.1').value
         port = int(declare('port', 8093).value)
         os.makedirs(self.map_dir, exist_ok=True)
@@ -338,7 +363,7 @@ class MapMaker(Node):
         return {'state': state, 'title': title, 'detail': detail,
                 'hasMap': has_map, 'unsaved': state == 'mapping' and not saved,
                 'lastSaved': last, 'suggestedName': default_name(),
-                'mapDir': self.map_dir}
+                'mapDir': self.map_dir, 'offerUse': self.offer_use}
 
     # ---------------------------------------------------------- actions
 
