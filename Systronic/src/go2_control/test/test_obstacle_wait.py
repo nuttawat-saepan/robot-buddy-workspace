@@ -1,5 +1,6 @@
 """A waypoint with something new on it waits, and ends the mission if it stays."""
 
+import itertools
 import math
 from pathlib import Path
 import sys
@@ -80,7 +81,10 @@ class ScanPointsTest(unittest.TestCase):
 def node(blocked, go=True):
     state = SimpleNamespace(
         stopping=False, obstacle_wait=0.2, blocked_during_goal=False,
-        fail_reason=None, get_logger=lambda: mock.Mock(), _progress=mock.Mock())
+        fail_reason=None, get_logger=lambda: mock.Mock(), _progress=mock.Mock(),
+        guard_turn=None, guard_turn_limit=5, _publish_wait=mock.Mock(),
+        _plan_to=mock.Mock(return_value=None), _turn_toward=mock.Mock(),
+        _arrival_yaw=mock.Mock(return_value=None))
     state._goal_blocked = mock.Mock(side_effect=blocked)
     state._go_to = mock.Mock(return_value=go)
     return state
@@ -120,8 +124,27 @@ class WaitTest(unittest.TestCase):
 
     def test_ordinary_failure_is_not_retried(self):
         state = node(lambda _wp: False, go=False)
-        self.assertFalse(self.run_it(state))
+        clock = itertools.count(0.0, 5.0)
+        with mock.patch("time.monotonic", lambda: next(clock)):
+            self.assertFalse(self.run_it(state))
         state._go_to.assert_called_once()
+
+    def test_a_guard_hold_turns_and_goes_on(self):
+        state = node(lambda _wp: False, go=False)
+
+        def held(*_args, **_kwargs):
+            state.guard_turn = 0.5
+            return False
+
+        def turned(*_args):
+            state.guard_turn = None
+            return True
+
+        state._go_to.side_effect = held
+        state._turn_out_of_hold = mock.Mock(side_effect=turned)
+        self.assertTrue(self.run_it(state))
+        state._go_to.assert_called_once()
+        state._turn_out_of_hold.assert_called_once()
 
 
 if __name__ == '__main__':

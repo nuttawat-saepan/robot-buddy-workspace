@@ -70,7 +70,8 @@ import time
 import rclpy
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
-from nav2_msgs.action import NavigateToPose, Spin
+from nav_msgs.msg import Path
+from nav2_msgs.action import ComputePathToPose, NavigateToPose, Spin
 from rcl_interfaces.msg import Log
 from rclpy.action import ActionClient
 from rclpy.node import Node
@@ -217,6 +218,37 @@ def turn_needed(yaw, dx, dy):
     return math.atan2(math.sin(bearing - yaw), math.cos(bearing - yaw))
 
 
+def path_bearing(points, x, y, lookahead):
+    """Bearing from (x, y) along a path, taken lookahead metres away.
+
+    The straight line to a waypoint can run through a wall the path goes
+    around. None when the path is empty or ends where the robot is.
+    """
+    if not points:
+        return None
+    distances = [math.hypot(px - x, py - y) for px, py in points]
+    nearest = distances.index(min(distances))
+    target = points[-1]
+    for index in range(nearest, len(points)):
+        if distances[index] >= lookahead:
+            target = points[index]
+            break
+    if math.hypot(target[0] - x, target[1] - y) < 1e-3:
+        return None
+    return math.atan2(target[1] - y, target[0] - x)
+
+
+def path_end_heading(points, back):
+    """The heading a path arrives with, measured over its last back metres."""
+    if not points:
+        return None
+    end = points[-1]
+    for px, py in reversed(points):
+        if math.hypot(end[0] - px, end[1] - py) >= back:
+            return math.atan2(end[1] - py, end[0] - px)
+    return None
+
+
 class GuardHold:
     """How long the collision guard has been refusing commands, without a break.
 
@@ -356,6 +388,25 @@ class MqttMissionBridge(Node):
         # guard like any other Nav2 command and this node still publishes no
         # velocity.
         self.spin = ActionClient(self, Spin, 'spin')
+        self.planner = ActionClient(
+            self, ComputePathToPose, 'compute_path_to_pose')
+        self.planner_id = self.declare_parameter(
+            'planner_id', 'GridBased').value
+        self.path_lookahead = float(self.declare_parameter(
+            'path_lookahead', 0.6).value)
+        # DWB does not know about the collision guard. It keeps asking to
+        # drive forward at something the guard will not let it reach, and a
+        # turn on the spot is what gets the robot out.
+        self.guard_turn_after = float(self.declare_parameter(
+            'guard_turn_after_seconds', 2.0).value)
+        self.guard_turn_min_angle = math.radians(float(self.declare_parameter(
+            'guard_turn_min_angle_deg', 15.0).value))
+        self.guard_turn_limit = int(self.declare_parameter(
+            'guard_turn_limit', 5).value)
+        self.guard_turns_left = 0
+        self.guard_turn = None
+        self.last_plan = None
+        self.create_subscription(Path, '/plan', self._on_plan, 1)
         self.turn_before_goal = bool(self.declare_parameter(
             'turn_before_goal', True).value)
         self.turn_min_angle = math.radians(float(self.declare_parameter(
@@ -1087,6 +1138,7 @@ class MqttMissionBridge(Node):
         again. Waiting ends the mission if the obstacle stays.
         """
         deadline = None
+        self.guard_turns_left = self.guard_turn_limit
         while not self.stopping:
             if self._goal_blocked(wp):
                 now = time.monotonic()
@@ -1107,24 +1159,29 @@ class MqttMissionBridge(Node):
             if deadline is not None:
                 self._progress(index, name, percent, 'Going to %s' % name)
             self.blocked_during_goal = False
-            self._turn_toward(wp, index, name, percent)
+            route = self._plan_to(wp)
+            self._turn_toward(wp, index, name, percent, route)
             if self.stopping:
                 return False
-            arrive_yaw = self._arrival_yaw(wp)
+            arrive_yaw = self._arrival_yaw(wp, route)
             started = time.monotonic()
-            ok = self._go_to(wp, arrive_yaw)
+            ok = self._go_to(wp, arrive_yaw, may_turn_out=True)
             # Foxy's BT navigator can drop a fresh goal at once with "send_goal
             # failed" when a server is slow to answer. That is not the goal
             # being unreachable, so send it again.
             for _ in range(2):
                 if ok or self.stopping or self.blocked_during_goal \
+                        or self.guard_turn is not None \
                         or time.monotonic() - started >= 4.0:
                     break
                 self.get_logger().warn('Nav2 dropped %s at once, retrying' % name)
                 self.fail_reason = None
                 time.sleep(1.0)
                 started = time.monotonic()
-                ok = self._go_to(wp, arrive_yaw)
+                ok = self._go_to(wp, arrive_yaw, may_turn_out=True)
+            while self.guard_turn is not None and not ok and not self.stopping:
+                ok = self._turn_out_of_hold(
+                    wp, arrive_yaw, index, name, percent)
             if ok and arrive_yaw is not None and not self.stopping:
                 self._progress(index, name, percent, 'Turning at %s' % name)
                 self._spin_to_yaw(float(wp.get('yaw', 0.0)))
@@ -1135,28 +1192,70 @@ class MqttMissionBridge(Node):
             deadline = None
         return False
 
-    def _turn_toward(self, wp, index, name, percent):
-        """Face a waypoint that is behind the robot before driving to it.
+    def _plan_to(self, wp):
+        """The route Nav2 would take to a waypoint as (x, y) points, or None.
+
+        Only while no goal is running: a second request would preempt the one
+        the behaviour tree has in progress.
+        """
+        if not self.turn_before_goal \
+                or not self.planner.wait_for_server(timeout_sec=2.0):
+            return None
+        goal = ComputePathToPose.Goal()
+        goal.planner_id = self.planner_id
+        goal.pose.header.frame_id = self.frame
+        goal.pose.header.stamp = self.get_clock().now().to_msg()
+        goal.pose.pose.position.x = float(wp.get('x', 0.0))
+        goal.pose.pose.position.y = float(wp.get('y', 0.0))
+        goal.pose.pose.orientation.w = 1.0
+        give_up = time.monotonic() + 3.0
+        send = self.planner.send_goal_async(goal)
+        while not send.done() and time.monotonic() < give_up:
+            time.sleep(0.05)
+        handle = send.result() if send.done() else None
+        if handle is None or not handle.accepted:
+            return None
+        result = handle.get_result_async()
+        while not result.done() and time.monotonic() < give_up:
+            time.sleep(0.05)
+        if not result.done() \
+                or result.result().status != GoalStatus.STATUS_SUCCEEDED:
+            return None
+        return [(p.pose.position.x, p.pose.position.y)
+                for p in result.result().result.path.poses]
+
+    def _on_plan(self, msg):
+        if msg.poses:
+            self.last_plan = [(p.pose.position.x, p.pose.position.y)
+                              for p in msg.poses]
+
+    def _turn_toward(self, wp, index, name, percent, route):
+        """Face the way the route leaves before driving it.
 
         DWB scores short forward arcs and this robot may not reverse, so a goal
         close behind it can leave no arc worth taking: on 2026-11-09 a robot
         0.59 m from a goal behind it stood still until Nav2 gave up. Foxy has
-        no rotation shim to do this. Best effort: if the turn is refused or
-        held up, Nav2 gets the goal as it always did.
+        no rotation shim to do this. It follows the route rather than the
+        straight line, which can point at a wall the route goes around. Best
+        effort: if the turn is refused or held up, Nav2 gets the goal as it
+        always did.
         """
-        if not self.turn_before_goal:
+        if route is None:
             return
         try:
             tf = self.tf_buffer.lookup_transform(
                 self.frame, self.base_frame, rclpy.time.Time())
         except Exception:                          # noqa: BLE001
             return
-        dx = float(wp.get('x', 0.0)) - tf.transform.translation.x
-        dy = float(wp.get('y', 0.0)) - tf.transform.translation.y
+        x, y = tf.transform.translation.x, tf.transform.translation.y
+        dx = float(wp.get('x', 0.0)) - x
+        dy = float(wp.get('y', 0.0)) - y
         yaw = self._current_yaw()
-        if yaw is None or math.hypot(dx, dy) < self.turn_skip_within:
+        bearing = path_bearing(route, x, y, self.path_lookahead)
+        if yaw is None or bearing is None \
+                or math.hypot(dx, dy) < self.turn_skip_within:
             return
-        angle = turn_needed(yaw, dx, dy)
+        angle = turn_needed(yaw, math.cos(bearing), math.sin(bearing))
         if abs(angle) < self.turn_min_angle:
             return
         note = 'Turning toward %s' % name
@@ -1164,6 +1263,50 @@ class MqttMissionBridge(Node):
         self._progress(index, name, percent, note)
         self._spin(angle)
         self._progress(index, name, percent, 'Going to %s' % name)
+
+    def _guard_turn_angle(self):
+        """Radians to face the current route, or None if a turn would not help.
+
+        Already facing it means something really is in the way, and the robot
+        should wait rather than swing about.
+        """
+        yaw = self._current_yaw()
+        if self.last_plan is None or yaw is None:
+            return None
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                self.frame, self.base_frame, rclpy.time.Time())
+        except Exception:                          # noqa: BLE001
+            return None
+        bearing = path_bearing(
+            self.last_plan, tf.transform.translation.x,
+            tf.transform.translation.y, self.path_lookahead)
+        if bearing is None:
+            return None
+        angle = turn_needed(yaw, math.cos(bearing), math.sin(bearing))
+        return angle if abs(angle) >= self.guard_turn_min_angle else None
+
+    def _turn_out_of_hold(self, wp, arrive_yaw, index, name, percent):
+        """Turn on the spot to face the route, then send the goal again."""
+        angle, self.guard_turn = self.guard_turn, None
+        self.guard_turns_left -= 1
+        note = 'Turning toward %s' % name
+        self.get_logger().info(
+            'Guard held the robot, turning %.0f deg to the route'
+            % math.degrees(angle))
+        self._progress(index, name, percent, note)
+        # The hold from the cancelled goal must not end the turn before it
+        # starts. The guard reports twice a second.
+        give_up = time.monotonic() + 1.5
+        while self.guard_hold.since is not None \
+                and time.monotonic() < give_up:
+            time.sleep(0.1)
+        self._spin(angle)
+        if self.stopping:
+            return False
+        self.fail_reason = None
+        self._progress(index, name, percent, 'Going to %s' % name)
+        return self._go_to(wp, arrive_yaw, may_turn_out=True)
 
     def _spin(self, angle):
         """Turn on the spot through Nav2; gives up quietly if refused or held."""
@@ -1208,14 +1351,15 @@ class MqttMissionBridge(Node):
         self.last_progress = payload
         self._publish(m.get('progressTopic'), payload)
 
-    def _arrival_yaw(self, wp):
+    def _arrival_yaw(self, wp, route):
         """The heading to arrive with, when the waypoint's own is the wrong way.
 
         A goal whose heading points back the way the robot came fails the same
-        way a goal behind it does, about 0.3 m out. Arrive facing forward and
-        turn on the spot instead. None when the waypoint's heading is fine.
+        way a goal behind it does, about 0.3 m out. Arrive facing the way the
+        route does and turn on the spot instead. None when the waypoint's
+        heading is fine.
         """
-        if not self.turn_before_goal:
+        if route is None:
             return None
         try:
             tf = self.tf_buffer.lookup_transform(
@@ -1226,10 +1370,13 @@ class MqttMissionBridge(Node):
         dy = float(wp.get('y', 0.0)) - tf.transform.translation.y
         if math.hypot(dx, dy) < self.turn_skip_within:
             return None
-        bearing = math.atan2(dy, dx)
-        if abs(turn_needed(float(wp.get('yaw', 0.0)), dx, dy)) <= math.pi / 2:
+        heading = path_end_heading(route, self.path_lookahead)
+        if heading is None:
             return None
-        return bearing
+        if abs(turn_needed(float(wp.get('yaw', 0.0)), math.cos(heading),
+                           math.sin(heading))) <= math.pi / 2:
+            return None
+        return heading
 
     def _spin_to_yaw(self, target):
         yaw = self._current_yaw()
@@ -1239,7 +1386,7 @@ class MqttMissionBridge(Node):
         if abs(angle) >= 0.05:
             self._spin(angle)
 
-    def _go_to(self, wp, arrive_yaw=None):
+    def _go_to(self, wp, arrive_yaw=None, may_turn_out=False):
         goal = NavigateToPose.Goal()
         pose = PoseStamped()
         pose.header.frame_id = self.frame
@@ -1248,6 +1395,8 @@ class MqttMissionBridge(Node):
         pose.pose.position.y = float(wp.get('y', 0.0))
         run_id = (self.mission or {}).get('runId')
         self._last_live = None
+        self.guard_turn = None
+        self.last_plan = None
         goal_yaw = float(wp.get('yaw', 0.0)) if arrive_yaw is None else arrive_yaw
         z, w = yaw_to_quaternion(goal_yaw)
         pose.pose.orientation.z = z
@@ -1289,12 +1438,21 @@ class MqttMissionBridge(Node):
                     handle.cancel_goal_async()
                     # Do not cancel it again every half second.
                     next_check = math.inf
+                elif may_turn_out and self.guard_turns_left > 0 \
+                        and not self.paused \
+                        and self.guard_hold.seconds(time.monotonic()) \
+                        >= self.guard_turn_after:
+                    self.guard_turn = self._guard_turn_angle()
+                    if self.guard_turn is not None:
+                        handle.cancel_goal_async()
+                        next_check = math.inf
         self.goal_handle = None
         result = result_future.result()
         ok = result is not None and result.status == GoalStatus.STATUS_SUCCEEDED
         replaced = self.mission is None or self.mission.get('runId') != run_id
         if not ok and not self.fail_reason and not self.stopping and not replaced \
-                and not self.blocked_during_goal and self._last_live:
+                and not self.blocked_during_goal and self.guard_turn is None \
+                and self._last_live:
             # The log line and the result arrive separately.
             time.sleep(0.3)
             self.fail_reason = nav_failure_reason(
